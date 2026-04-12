@@ -1,0 +1,24 @@
+host: 0.0.0.0
+port: 8182
+evaluationTimeout: 30000
+channelizer: org.apache.tinkerpop.gremlin.server.channel.WebSocketChannelizer
+graphs:
+  graph: conf/tinkergraph-empty.properties
+scriptEngines:
+  gremlin-groovy:
+    plugins:
+      org.apache.tinkerpop.gremlin.server.jsr223.GremlinServerGremlinPlugin: {}
+      org.apache.tinkerpop.gremlin.tinkergraph.jsr223.TinkerGraphGremlinPlugin: {}
+      org.apache.tinkerpop.gremlin.jsr223.ImportGremlinPlugin:
+        classImports:
+          - java.lang.Math
+        methodImports:
+          - java.lang.Math#*
+      org.apache.tinkerpop.gremlin.jsr223.ScriptFileGremlinPlugin:
+        files: []
+serializers:
+  - className: org.apache.tinkerpop.gremlin.util.ser.GraphSONMessageSerializerV3
+    config:
+      ioRegistries:
+        - org.apache.tinkerpop.gremlin.tinkergraph.structure.TinkerIoRegistryV3
+  - className: org.apache.tinkerpop.gremlin.util.ser.GraphBinaryMessageSerializerV4

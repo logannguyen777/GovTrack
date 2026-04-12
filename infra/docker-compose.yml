@@ -1,0 +1,85 @@
+name: govflow
+
+services:
+  # --- GDB local fallback: Apache TinkerPop Gremlin Server ---
+  gremlin-server:
+    image: tinkerpop/gremlin-server:3.7.3
+    container_name: govflow-gremlin
+    ports:
+      - "8182:8182"
+    volumes:
+      - ./gremlin-server/gremlin-server.yaml:/opt/gremlin-server/conf/gremlin-server-custom.yaml:ro
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        cp /opt/gremlin-server/conf/gremlin-server-custom.yaml /opt/gremlin-server/conf/gremlin-server.yaml
+        IP=$$(ip -o -4 addr list eth0 | perl -n -e 'if (m{inet\s([\d\.]+)\/\d+\s}xms) { print $$1 }')
+        sed -i "s|^host:.*|host: $$IP|" /opt/gremlin-server/conf/gremlin-server.yaml
+        exec /opt/gremlin-server/bin/gremlin-server.sh /opt/gremlin-server/conf/gremlin-server.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8182/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Hologres local fallback: PostgreSQL 16 with pgvector ---
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: govflow-postgres
+    environment:
+      POSTGRES_DB: govflow
+      POSTGRES_USER: govflow
+      POSTGRES_PASSWORD: govflow_dev_2026
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U govflow -d govflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # --- OSS local fallback: MinIO ---
+  minio:
+    image: minio/minio:latest
+    container_name: govflow-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # --- MinIO bucket initialization ---
+  minio-init:
+    image: minio/mc:latest
+    container_name: govflow-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin123;
+      mc mb --ignore-existing local/govflow-dev;
+      mc mb --ignore-existing local/govflow-dev/bundles;
+      mc mb --ignore-existing local/govflow-dev/drafts;
+      mc mb --ignore-existing local/govflow-dev/published;
+      mc mb --ignore-existing local/govflow-dev/templates;
+      mc mb --ignore-existing local/govflow-dev/audit-archives;
+      echo 'MinIO buckets created';
+      "
+
+volumes:
+  pgdata:
+  miniodata:

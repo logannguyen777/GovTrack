@@ -1,19 +1,46 @@
 # Python
-.venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 *.egg-info/
+dist/
+build/
+.venv/
+*.egg
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
+# Docker volumes
+pgdata/
+miniodata/
 
-# Env
-.env
-.env.local
+# Data artifacts (keep structure, ignore large files)
+data/laws/*.jsonl
+data/tthc/*.jsonl
+data/embeddings/
+
+# Logs
+*.log
+logs/
