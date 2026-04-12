@@ -1,0 +1,8 @@
+# Large datasets — don't commit to git
+legal/raw/
+provinces/
+samples/
+
+# Keep processed output (small enough)
+!legal/processed/
+!tthc_specs/

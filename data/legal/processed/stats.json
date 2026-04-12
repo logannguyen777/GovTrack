@@ -1,0 +1,50 @@
+{
+  "total_vertices": 10688,
+  "total_edges": 104476,
+  "total_chunks": 869,
+  "vertex_labels": {
+    "Law": 61,
+    "Article": 861,
+    "Clause": 3660,
+    "Point": 4089,
+    "Other": 3,
+    "Decree": 176,
+    "Decision": 1163,
+    "Circular": 266,
+    "Resolution": 409
+  },
+  "edge_labels": {
+    "CONTAINS": 861,
+    "HAS_CLAUSE": 3660,
+    "HAS_POINT": 4089,
+    "DETAILED_BY": 294,
+    "SUPERSEDED_BY": 2083,
+    "BASED_ON": 86889,
+    "REPEALED_BY": 2072,
+    "REFERENCES": 1680,
+    "DETAILS": 294,
+    "AMENDED_BY": 1979,
+    "PARTIALLY_REPEALED_BY": 564,
+    "RELATED": 7,
+    "SUSPENDED_BY": 2,
+    "PARTIALLY_SUSPENDED_BY": 2
+  },
+  "core_laws_found": [
+    "28/2009/QH12",
+    "01/2021/NĐ-CP",
+    "107/2021/NĐ-CP",
+    "101/2024/NĐ-CP",
+    "08/2022/NĐ-CP",
+    "31/2024/QH15",
+    "50/2014/QH13",
+    "30/2020/NĐ-CP",
+    "45/2020/NĐ-CP",
+    "59/2020/QH14",
+    "62/2020/QH14",
+    "136/2020/NĐ-CP",
+    "15/2021/NĐ-CP",
+    "72/2020/QH14",
+    "61/2018/NĐ-CP"
+  ],
+  "core_laws_missing": []
+}
