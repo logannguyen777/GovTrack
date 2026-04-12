@@ -1,0 +1,73 @@
+{
+  "code": "2.002154",
+  "name": "Cấp Giấy Phép Môi Trường",
+  "category": "Môi trường",
+  "authority_level": "Bộ/UBND tỉnh",
+  "sla_days_law": 30,
+  "sla_days_typical": "45-120",
+  "fee_vnd": 0,
+  "authority_name": "Bộ TN&MT (nhóm I) / UBND tỉnh (nhóm II-III)",
+  "governing_articles": [
+    {
+      "law_code": "72/2020/QH14",
+      "article_nums": [
+        39,
+        40,
+        41,
+        42,
+        43,
+        44
+      ]
+    },
+    {
+      "law_code": "08/2022/ND-CP",
+      "article_nums": [
+        28,
+        29,
+        30,
+        31,
+        32
+      ]
+    }
+  ],
+  "required_components": [
+    {
+      "name": "Văn bản đề nghị cấp giấy phép môi trường",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": null
+    },
+    {
+      "name": "Báo cáo đánh giá tác động môi trường (ĐTM) đã phê duyệt",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": null
+    },
+    {
+      "name": "Hồ sơ thiết kế công trình bảo vệ môi trường",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": null
+    },
+    {
+      "name": "Chứng chỉ năng lực đơn vị thực hiện",
+      "is_required": true,
+      "original_or_copy": "copy",
+      "condition": null
+    },
+    {
+      "name": "Kế hoạch quản lý môi trường",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": null
+    }
+  ],
+  "workflow_steps": [
+    "Tiếp nhận hồ sơ (trực tuyến hoặc trực tiếp)",
+    "Kiểm tra tính đầy đủ, hợp lệ của hồ sơ",
+    "Thẩm định hồ sơ + kiểm tra thực tế (nếu cần)",
+    "Lấy ý kiến các cơ quan liên quan",
+    "Lập báo cáo thẩm định, trình phê duyệt",
+    "Cấp/từ chối cấp giấy phép môi trường"
+  ]
+}

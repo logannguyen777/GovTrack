@@ -1,0 +1,76 @@
+{
+  "code": "1.001757",
+  "name": "Đăng ký thành lập doanh nghiệp (Công ty TNHH)",
+  "category": "Kinh doanh",
+  "authority_level": "Sở",
+  "sla_days_law": 3,
+  "sla_days_typical": "5-10",
+  "fee_vnd": 50000,
+  "authority_name": "Sở Kế hoạch và Đầu tư",
+  "governing_articles": [
+    {
+      "law_code": "59/2020/QH14",
+      "article_nums": [
+        22,
+        23,
+        24,
+        25,
+        26,
+        27
+      ]
+    },
+    {
+      "law_code": "01/2021/ND-CP",
+      "article_nums": [
+        21,
+        22,
+        23,
+        24
+      ]
+    }
+  ],
+  "required_components": [
+    {
+      "name": "Giấy đề nghị đăng ký doanh nghiệp",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": null
+    },
+    {
+      "name": "Điều lệ công ty",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": null
+    },
+    {
+      "name": "Danh sách thành viên / cổ đông sáng lập",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": null
+    },
+    {
+      "name": "Bản sao CCCD/hộ chiếu người đại diện pháp luật",
+      "is_required": true,
+      "original_or_copy": "copy",
+      "condition": null
+    },
+    {
+      "name": "Bản sao CCCD/hộ chiếu các thành viên",
+      "is_required": true,
+      "original_or_copy": "copy",
+      "condition": null
+    },
+    {
+      "name": "Giấy tờ chứng minh trụ sở",
+      "is_required": false,
+      "original_or_copy": "copy",
+      "condition": "Nếu ngành nghề yêu cầu"
+    }
+  ],
+  "workflow_steps": [
+    "Tiếp nhận hồ sơ (trực tuyến qua Cổng ĐKKD hoặc trực tiếp)",
+    "Kiểm tra tên DN, ngành nghề, thông tin thành viên",
+    "Cấp mã số doanh nghiệp",
+    "Trả GCN đăng ký doanh nghiệp"
+  ]
+}

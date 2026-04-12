@@ -1,0 +1,55 @@
+{
+  "code": "1.000122",
+  "name": "Cấp Phiếu Lý Lịch Tư Pháp",
+  "category": "Tư pháp",
+  "authority_level": "Sở",
+  "sla_days_law": 10,
+  "sla_days_typical": "15-25",
+  "fee_vnd": 200000,
+  "authority_name": "Sở Tư pháp",
+  "governing_articles": [
+    {
+      "law_code": "28/2009/QH12",
+      "article_nums": [
+        44,
+        45,
+        46,
+        47
+      ]
+    }
+  ],
+  "required_components": [
+    {
+      "name": "Tờ khai yêu cầu cấp lý lịch tư pháp",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": null
+    },
+    {
+      "name": "Bản sao CCCD hoặc hộ chiếu",
+      "is_required": true,
+      "original_or_copy": "copy",
+      "condition": null
+    },
+    {
+      "name": "Bản sao sổ hộ khẩu hoặc giấy tờ chứng minh nơi cư trú",
+      "is_required": true,
+      "original_or_copy": "copy",
+      "condition": null
+    },
+    {
+      "name": "Tờ khai xác nhận thông tin cá nhân bổ sung",
+      "is_required": false,
+      "original_or_copy": "original",
+      "condition": "Nếu thay đổi họ tên/quốc tịch"
+    }
+  ],
+  "workflow_steps": [
+    "Tiếp nhận tờ khai tại Sở Tư pháp",
+    "Tra cứu trong CSDL lý lịch tư pháp",
+    "Gửi phiếu tra cứu tới Bộ Công an (C53)",
+    "Nhận kết quả tra cứu",
+    "Lập phiếu LLTP, trình ký",
+    "Trả kết quả cho công dân"
+  ]
+}

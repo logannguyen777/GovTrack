@@ -1,0 +1,100 @@
+{
+  "code": "1.004415",
+  "name": "Cấp giấy phép xây dựng",
+  "category": "Xây dựng",
+  "authority_level": "Sở",
+  "sla_days_law": 15,
+  "sla_days_typical": "30-90",
+  "fee_vnd": 150000,
+  "authority_name": "Sở Xây dựng",
+  "governing_articles": [
+    {
+      "law_code": "50/2014/QH13",
+      "article_nums": [
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102
+      ]
+    },
+    {
+      "law_code": "15/2021/ND-CP",
+      "article_nums": [
+        41,
+        42,
+        43,
+        44
+      ]
+    },
+    {
+      "law_code": "136/2020/ND-CP",
+      "article_nums": [
+        13,
+        14,
+        15
+      ]
+    }
+  ],
+  "required_components": [
+    {
+      "name": "Đơn đề nghị cấp giấy phép xây dựng",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": null
+    },
+    {
+      "name": "Bản sao giấy tờ chứng minh quyền sử dụng đất (GCN QSDĐ)",
+      "is_required": true,
+      "original_or_copy": "copy",
+      "condition": null
+    },
+    {
+      "name": "Bản vẽ thiết kế xây dựng",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": null
+    },
+    {
+      "name": "Bản kê khai năng lực, kinh nghiệm đơn vị thiết kế",
+      "is_required": false,
+      "original_or_copy": "copy",
+      "condition": "Khi yêu cầu năng lực"
+    },
+    {
+      "name": "Văn bản thẩm duyệt PCCC",
+      "is_required": true,
+      "original_or_copy": "original",
+      "condition": "Công trình thuộc diện thẩm duyệt theo NĐ 136/2020 Điều 13"
+    },
+    {
+      "name": "Báo cáo kết quả thẩm định thiết kế",
+      "is_required": false,
+      "original_or_copy": "original",
+      "condition": "Tuỳ cấp công trình"
+    },
+    {
+      "name": "Cam kết bảo vệ môi trường",
+      "is_required": false,
+      "original_or_copy": "original",
+      "condition": "Nếu không thuộc diện ĐTM"
+    }
+  ],
+  "workflow_steps": [
+    "Tiếp nhận hồ sơ tại Bộ phận Một cửa",
+    "Vào sổ, cấp mã hồ sơ, in giấy biên nhận",
+    "Chuyển Phòng Quản lý Xây dựng",
+    "Thẩm định: đối chiếu Luật XD + NĐ 15/2021 + PCCC + quy hoạch",
+    "Xin ý kiến: Phòng QHKT, Phòng Pháp chế, Sở TN&MT (nếu cần)",
+    "Trả kết quả: Giấy phép XD hoặc Công văn từ chối"
+  ]
+}
