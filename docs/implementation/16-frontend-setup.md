@@ -1,5 +1,7 @@
 # 16 - Frontend Setup: Next.js 15, Design System, Auth, WebSocket
 
+> **Status: IMPLEMENTED** (2026-04-13)
+
 ## Muc tieu (Objective)
 
 Set up the Next.js 15 frontend project with the full design system (tokens, fonts,
@@ -967,17 +969,27 @@ npm run build
 
 | Component              | File / Location                              | Status |
 |------------------------|----------------------------------------------|--------|
-| Design tokens (OKLCH)  | frontend/src/app/globals.css                 | Ready  |
-| Font loading           | frontend/src/app/layout.tsx                  | Ready  |
-| shadcn/ui + variants   | frontend/src/components/ui/                  | Ready  |
-| Dark/light mode        | frontend/src/components/providers/theme-provider.tsx | Ready |
-| App shell layout       | frontend/src/components/layout/app-shell.tsx | Ready  |
-| Auth provider + mock   | frontend/src/components/providers/auth-provider.tsx | Ready |
-| Route middleware        | frontend/src/middleware.ts                   | Ready  |
-| API client + TanStack  | frontend/src/lib/api.ts                      | Ready  |
-| WebSocket manager      | frontend/src/lib/ws.ts                       | Ready  |
-| Zustand stores         | frontend/src/lib/store.ts                    | Ready  |
-| Framer Motion config   | frontend/src/lib/motion.ts                   | Ready  |
-| Route structure        | frontend/src/app/(public|internal|auth)/     | Ready  |
+| Design tokens (OKLCH)  | frontend/src/app/globals.css                 | DONE   |
+| Font loading           | frontend/src/app/layout.tsx                  | DONE   |
+| shadcn/ui + variants   | frontend/src/components/ui/                  | DONE   |
+| Dark/light mode        | frontend/src/components/providers/theme-provider.tsx | DONE |
+| App shell layout       | frontend/src/components/layout/app-shell.tsx | DONE   |
+| Auth provider + real   | frontend/src/components/providers/auth-provider.tsx | DONE |
+| Route middleware        | frontend/src/middleware.ts                   | DONE   |
+| API client + TanStack  | frontend/src/lib/api.ts                      | DONE   |
+| WebSocket manager      | frontend/src/lib/ws.ts                       | DONE   |
+| Zustand stores         | frontend/src/lib/store.ts                    | DONE   |
+| Framer Motion config   | frontend/src/lib/motion.ts                   | DONE   |
+| Route structure        | frontend/src/app/(public|internal|auth)/     | DONE   |
+| Error boundary         | frontend/src/components/ui/error-boundary.tsx | DONE   |
+| Empty state component  | frontend/src/components/ui/empty-state.tsx    | DONE   |
+| Loading skeletons      | frontend/src/components/ui/skeleton-card.tsx  | DONE   |
+| 404 page               | frontend/src/app/not-found.tsx                | DONE   |
+| Favicon + OG meta      | public/favicon.svg + layout.tsx metadata      | DONE   |
+| WS connection status   | sidebar.tsx + ws.ts getState()                | DONE   |
+| Demo mode badge        | top-bar.tsx (NEXT_PUBLIC_DEMO_MODE)           | DONE   |
+| Accessibility queries  | globals.css (reduced-motion + high-contrast)  | DONE   |
+| Demo animations        | globals.css (shake, pulse-glow, deny-flash)   | DONE   |
+| Qwen AI branding       | trace viewer + sidebar (Powered by Qwen3)     | DONE   |
 
 Next step: proceed to `17-frontend-screens.md` for implementing all 8 screens.

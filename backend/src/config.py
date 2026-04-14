@@ -1,4 +1,9 @@
+import logging
+import warnings
+
 from pydantic_settings import BaseSettings
+
+_config_logger = logging.getLogger("govflow.config")
 
 
 class Settings(BaseSettings):
@@ -14,7 +19,8 @@ class Settings(BaseSettings):
     # Hologres / PostgreSQL
     hologres_dsn: str = "postgresql://govflow:govflow_dev_2026@localhost:5433/govflow"
 
-    # DashScope
+    # DashScope (REQUIRED for embeddings and agent LLM calls)
+    # Set via DASHSCOPE_API_KEY env var or .env file
     dashscope_api_key: str = ""
     dashscope_base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
@@ -44,3 +50,22 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Startup warnings for missing critical configuration
+if not settings.dashscope_api_key:
+    warnings.warn(
+        "DASHSCOPE_API_KEY is not set. Embedding generation and agent LLM calls will fail. "
+        "Set it via DASHSCOPE_API_KEY env var or in .env file.",
+        stacklevel=1,
+    )
+    _config_logger.warning(
+        "DASHSCOPE_API_KEY is not set — embedding pipeline and agent LLM calls are disabled"
+    )
+
+if settings.govflow_env == "cloud" and settings.jwt_secret.startswith("dev-secret"):
+    warnings.warn(
+        "JWT_SECRET is still using dev default in cloud environment. "
+        "Set a secure JWT_SECRET for production.",
+        stacklevel=1,
+    )
+    _config_logger.error("JWT_SECRET is using dev default in cloud environment — INSECURE")

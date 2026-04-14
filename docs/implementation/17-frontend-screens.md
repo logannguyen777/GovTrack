@@ -1,5 +1,7 @@
 # 17 - Frontend Screens: All 8 Application Views
 
+> **Status: IMPLEMENTED** (2026-04-13)
+
 ## Muc tieu (Objective)
 
 Implement all 8 GovFlow screens, the shared component library, graph visualization
@@ -892,15 +894,17 @@ npm run build
 
 ## Tong ket (Summary)
 
-| Screen               | Route                              | Key Components                    |
-|----------------------|------------------------------------|-----------------------------------|
-| Citizen Portal       | (public)/                          | Hero search, TTHC cards, wizard   |
-| Intake UI            | (internal)/intake/                 | Drag-drop, OCR preview, pipeline  |
-| Agent Trace Viewer   | (internal)/trace/[case_id]/        | React Flow, dagre, WS live nodes  |
-| Compliance Workspace | (internal)/compliance/[case_id]/   | Split view, GapCard, CitationBadge|
-| Department Inbox     | (internal)/inbox/                  | Kanban 5-col, DnD, SLA countdown |
-| Document Viewer      | (internal)/documents/[id]/         | react-pdf, entity overlay, tabs   |
-| Leadership Dashboard | (internal)/dashboard/              | KPI cards, charts, AI weekly brief|
-| Security Console     | (internal)/security/               | Live audit, demo controls, blur   |
+| Screen               | Route                              | Key Components                                          | Status |
+|----------------------|------------------------------------|---------------------------------------------------------|--------|
+| Citizen Portal       | (public)/portal/                   | Hero search, TTHC cards, tracking                       | DONE   |
+| Submit Wizard        | (public)/submit/[tthc_code]/       | 4-step wizard: TTHC→info→upload→review+submit           | DONE   |
+| Case Tracking        | (public)/track/[case_id]/          | Timeline 5 stages, polling, status card                 | DONE   |
+| Intake UI            | (internal)/intake/                 | Drag-drop, OCR panels, compliance bar, agent progress   | DONE   |
+| Agent Trace Viewer   | (internal)/trace/[case_id]/        | React Flow, dagre, WS live nodes, agent step sidebar    | DONE   |
+| Compliance Workspace | (internal)/compliance/[case_id]/   | Subgraph gaps/citations, score bar, doc list, actions   | DONE   |
+| Department Inbox     | (internal)/inbox/                  | Kanban 5-col, @dnd-kit DnD, TTHC/SLA filters           | DONE   |
+| Document Viewer      | (internal)/documents/[id]/         | Preview, tabs, signed URL, redacted fields              | DONE   |
+| Leadership Dashboard | (internal)/dashboard/              | KPI cards, charts, SLA heatmap, weekly brief, approve   | DONE   |
+| Security Console     | (internal)/security/               | Live audit, demo controls, denial heatmap, blur demo    | DONE   |
 
 Next step: proceed to `18-integration-testing.md` for E2E and permission tests.

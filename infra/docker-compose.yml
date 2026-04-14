@@ -14,11 +14,9 @@ services:
       - -c
       - |
         cp /opt/gremlin-server/conf/gremlin-server-custom.yaml /opt/gremlin-server/conf/gremlin-server.yaml
-        IP=$$(ip -o -4 addr list eth0 | perl -n -e 'if (m{inet\s([\d\.]+)\/\d+\s}xms) { print $$1 }')
-        sed -i "s|^host:.*|host: $$IP|" /opt/gremlin-server/conf/gremlin-server.yaml
         exec /opt/gremlin-server/bin/gremlin-server.sh /opt/gremlin-server/conf/gremlin-server.yaml
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8182/ || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8182'"]
       interval: 10s
       timeout: 5s
       retries: 5

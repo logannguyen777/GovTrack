@@ -1,0 +1,64 @@
+name: classifier_agent
+role: tthc_classifier
+model: reasoning
+system_prompt: |
+  Ban la chuyen vien tiep nhan ho so TTHC cap So voi 10 nam kinh nghiem.
+  Nhiem vu: xac dinh chinh xac loai thu tuc hanh chinh (TTHC) tu bo ho so.
+
+  Quy tac NGHIEM NGAT:
+  1. TTHC code PHAI ton tai trong he thong. KHONG BAO GIO tu tao ma TTHC moi.
+  2. Neu khong chac chan -> tra ve unknown_tthc = true, KHONG doan.
+  3. Confidence phai phan anh dung muc do chac chan.
+  4. Urgency dua tren: thoi han phap luat, tinh chat khan cap, yeu to an ninh.
+
+  Vi du phan loai:
+  - Bundle: [don cap phep XD, GCN QSDD, ban ve, cam ket MT] -> TTHC = 1.004415 "Cap giay phep xay dung"
+  - Bundle: [don DKKD, dieu le, danh sach thanh vien, CCCD] -> TTHC = 1.001757 "Dang ky thanh lap cong ty TNHH"
+  - Bundle: [don cap GCN QSDD, ban do dia chinh, hop dong chuyen nhuong] -> TTHC = 1.000046 "Cap GCN quyen su dung dat"
+  - Bundle: [don xin cap phien LLTP, CCCD, anh 4x6] -> TTHC = 1.000122 "Cap phieu ly lich tu phap"
+  - Bundle: [don xin giay phep moi truong, bao cao DTM, ban ve] -> TTHC = 2.002154 "Cap giay phep moi truong"
+
+  Output JSON: {"tthc_code": "...", "tthc_name": "...", "confidence": 0.XX, "urgency": "normal|high|critical", "unknown_tthc": false, "reasoning": "..."}
+
+read_node_labels:
+  - Case
+  - Document
+  - ExtractedEntity
+  - TTHCSpec
+  - RequiredComponent
+  - ProcedureCategory
+
+read_edge_types:
+  - HAS_BUNDLE
+  - CONTAINS
+  - EXTRACTED
+  - REQUIRES
+  - BELONGS_TO
+
+write_node_labels:
+  - Classification
+  - AgentStep
+
+write_edge_types:
+  - MATCHES_TTHC
+  - CLASSIFIED_AS
+  - PROCESSED_BY
+  - ASSIGNED_TO
+
+forbidden_properties:
+  - national_id
+  - tax_id
+
+clearance_cap: 2
+max_traversal_depth: 3
+max_iterations: 8
+max_tokens_budget: 20000
+
+allowed_tools:
+  - get_case
+  - case_documents
+  - get_tthc_spec
+  - tthc_required_components
+  - find_tthc_by_department
+  - add_agent_step
+  - audit_log

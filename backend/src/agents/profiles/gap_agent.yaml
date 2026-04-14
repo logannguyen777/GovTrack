@@ -1,0 +1,53 @@
+name: gap_agent
+role: gap_checker
+model: reasoning
+system_prompt: |
+  Ban la agent kiem tra thieu sot ho so.
+  Nhiem vu: so sanh tai lieu da nop voi yeu cau cua TTHCSpec,
+  xac dinh thanh phan con thieu hoac khong hop le,
+  tao Gap vertices cho tung thieu sot.
+
+read_node_labels:
+  - Case
+  - Bundle
+  - Document
+  - ExtractedEntity
+  - TTHCSpec
+  - RequiredComponent
+
+read_edge_types:
+  - HAS_BUNDLE
+  - CONTAINS
+  - EXTRACTED
+  - MATCHES_TTHC
+  - REQUIRES
+  - SATISFIES
+
+write_node_labels:
+  - Gap
+  - AgentStep
+
+write_edge_types:
+  - HAS_GAP
+  - GAP_FOR
+  - SATISFIES
+  - PROCESSED_BY
+  - ASSIGNED_TO
+
+forbidden_properties:
+  - national_id
+  - tax_id
+
+clearance_cap: 1
+max_traversal_depth: 4
+max_iterations: 10
+max_tokens_budget: 25000
+
+allowed_tools:
+  - get_case
+  - case_documents
+  - case_gaps
+  - tthc_required_components
+  - add_gap
+  - add_agent_step
+  - audit_log

@@ -1,5 +1,7 @@
 # 15 - Permission Engine: 3-Tier Enforcement
 
+> **Status: IMPLEMENTED** (2026-04-13)
+
 ## Muc tieu (Objective)
 
 Implement the full 3-tier permission enforcement stack: SDK Guard (Tier 1),
@@ -1025,13 +1027,13 @@ LOG_LEVEL=DEBUG uvicorn src.main:app --port 8000
 
 | Component           | File                                    | Status |
 |---------------------|-----------------------------------------|--------|
-| SDK Guard (Tier 1)  | backend/src/graph/sdk_guard.py          | Ready  |
-| RBAC (Tier 2)       | GDB native + rbac_simulator.py fallback | Ready  |
-| Property Mask (T3)  | backend/src/graph/property_mask.py      | Ready  |
-| Permitted Client    | backend/src/graph/permitted_client.py   | Ready  |
-| Audit Logger        | backend/src/graph/audit.py              | Ready  |
+| SDK Guard (Tier 1)  | backend/src/graph/sdk_guard.py          | DONE   |
+| RBAC (Tier 2)       | GDB native + rbac_simulator.py fallback | DONE   |
+| Property Mask (T3)  | backend/src/graph/property_mask.py      | DONE   |
+| Permitted Client    | backend/src/graph/permitted_client.py   | DONE   |
+| Audit Logger        | backend/src/graph/audit.py              | DONE   |
 | Policy-as-Graph     | backend/src/graph/policy_graph.py       | Optional |
-| Demo Endpoints      | backend/src/api/permission_demo.py      | Ready  |
-| Negative Tests      | backend/tests/test_permissions.py       | 22 scenarios |
+| Demo Endpoints      | backend/src/api/permission_demo.py      | DONE   |
+| Negative Tests      | backend/tests/test_permissions.py       | DONE (22/22 passed) |
 
 Next step: proceed to `16-frontend-setup.md` for the frontend foundation.

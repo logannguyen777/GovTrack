@@ -1,5 +1,14 @@
 # 01 - Infrastructure: Cloud Provisioning & Local Docker Fallback
 
+> **Status: DONE** (2026-04-12)
+> - [x] Docker Compose (Gremlin, PostgreSQL+pgvector, MinIO) — all healthy
+> - [x] `backend/src/database.py` — connection factory (GDB, PG, OSS/MinIO)
+> - [x] `backend/src/main.py` — lifespan wired with init/close
+> - [x] Verification: GDB g.V().count()=[0], PG SELECT 1=1, MinIO put+sign OK
+> - [x] Full lifespan startup+shutdown clean
+> - [ ] DashScope — pending API key configuration
+> - [ ] Alibaba Cloud provisioning — deferred to cloud deployment
+
 ## Muc tieu (Objective)
 
 Provision Alibaba Cloud services (GDB, Hologres, OSS, ECS, Model Studio) for production,

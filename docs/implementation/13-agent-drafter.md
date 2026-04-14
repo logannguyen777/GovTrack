@@ -1,5 +1,25 @@
 # Agent Implementation: Drafter (Agent 9)
 
+**Status: DONE** (2026-04-13)
+
+- [x] Permission profile YAML (`profiles/draft_agent.yaml`) with full ND 30/2020 system prompt
+- [x] System prompt (Vietnamese, ND 30/2020 the thuc rules)
+- [x] Step 1: Parallel-fetch case context (8 concurrent Gremlin queries)
+- [x] Step 2: Idempotency check (skip if draft exists)
+- [x] Step 3: Decision type extraction + doc type determination
+- [x] Step 4: Jinja2 template loading from Hologres (graceful LLM fallback)
+- [x] Step 5: Template rendering or LLM body generation
+- [x] Step 6: Full ND 30/2020 document builder (9 mandatory sections + DU THAO)
+- [x] Step 7: ND 30/2020 validation (7+ format checks)
+- [x] Step 8: LLM-based validation fix attempt
+- [x] Step 9: Citizen-facing explanation generation (PII-stripped)
+- [x] Step 10: Draft vertex + HAS_DRAFT edge write to GDB
+- [x] Failure mode handling (missing template, undefined vars, validation fail, PII)
+- [x] Gremlin templates (5 new: case_decision, case_summaries_text, case_citations_via_gaps, case_existing_drafts, add_draft)
+- [x] Orchestrator registration (`draft_agent`)
+- [ ] End-to-end test with real DashScope API key
+- [ ] Demo moment in Document Viewer
+
 ## 1. Objective
 
 Generate ND 30/2020 compliant administrative output documents: decisions (quyet dinh), permits (giay phep), response letters (cong van), and rejection notices (thong bao tu choi). Uses Jinja2 templates loaded from OSS/Hologres and validates output against ND 30/2020 format rules. CRITICAL: Drafter cannot publish -- human review gate is enforced architecturally. Also generates citizen-facing plain-language explanations.

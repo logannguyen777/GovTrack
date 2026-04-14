@@ -1,5 +1,18 @@
 # 03 - Backend API: FastAPI Routes, Auth, WebSocket
 
+> **Status: DONE** (2026-04-12)
+> - [x] JWT Auth (`backend/src/auth.py`) — HS256, role/clearance dependencies
+> - [x] Pydantic v2 schemas (`models/schemas.py`, `models/enums.py`)
+> - [x] 22 REST endpoints across 11 routers (all in `backend/src/api/`)
+> - [x] WebSocket pub/sub (`api/ws.py`) — topic-based, token auth
+> - [x] Rate limiting (slowapi) + CORS configured
+> - [x] `main.py` updated with all routers
+> - [x] Seed users (6 demo accounts) in `infra/postgres/init.sql`
+> - [x] Pre-signed PUT URLs for OSS uploads (`oss_put_signed_url`)
+> - [x] All endpoints verified against live GDB + PG + MinIO
+> - [ ] DashScope embedding search — requires API key (deferred to data-layer)
+> - [ ] Agent pipeline execution — stub until `04-agent-runtime.md`
+
 ## Muc tieu (Objective)
 
 Build the complete FastAPI application with all REST routes, JWT authentication,
@@ -1365,12 +1378,12 @@ curl -s http://localhost:8000/public/tthc
 
 | Component          | Status                                 |
 |--------------------|----------------------------------------|
-| JWT Auth           | HS256, role/clearance claims, mock login |
-| REST Routes        | 22 endpoints across 10 routers         |
-| WebSocket          | Topic-based pub/sub at /api/ws         |
-| Pydantic Schemas   | Full request/response models           |
-| Rate Limiting      | Slowapi, configurable per route        |
-| CORS               | Configured for frontend origin         |
-| OpenAPI Docs       | Auto-generated at /docs                |
+| JWT Auth           | DONE — HS256, role/clearance claims, login |
+| REST Routes        | DONE — 22 endpoints across 11 routers  |
+| WebSocket          | DONE — Topic-based pub/sub at /api/ws  |
+| Pydantic Schemas   | DONE — Full request/response models    |
+| Rate Limiting      | DONE — Slowapi, configurable per route |
+| CORS               | DONE — Configured for frontend origin  |
+| OpenAPI Docs       | DONE — Auto-generated at /docs         |
 
 Next step: proceed to `04-agent-runtime.md` to build the agent system.

@@ -1,0 +1,124 @@
+name: security_officer_agent
+role: security_officer
+model: reasoning
+system_prompt: |
+  Ban la Si quan An ninh Thong tin cap So voi 20 nam kinh nghiem ve bao mat nha nuoc.
+  Nhiem vu: xac dinh cap mat cho ho so va tai lieu, thuc thi kiem soat truy cap, ghi nhat ky kiem toan.
+
+  CAP MAT THEO LUAT BAO VE BI MAT NHA NUOC 2018:
+  - Unclassified (Binh thuong): khong chua thong tin nhay cam
+  - Confidential (Mat): thong tin noi bo co quan, du lieu ca nhan, vi tri nhay cam
+  - Secret (Tuyet mat): thong tin an ninh, quoc phong, nhan su cap cao, tai chinh cong lon
+  - Top Secret (Toi mat): bi mat quoc gia, quoc phong cap cao, ngoai giao
+
+  QUY TAC PHAN LOAI:
+  1. Keyword scan: "quoc phong", "nhan su cap cao", "ngoai giao", "tai chinh cong", "CCCD" (du lieu ca nhan lon), "khu quan su", "bien gioi"
+  2. Location sensitivity: cross-check voi danh sach vung nhay cam (khu quan su, bien gioi, co so quoc phong)
+  3. Aggregation risk: nhieu thong tin muc thap ket hop co the tang cap mat
+     Vi du: ten + CCCD + dia chi + nghe nghiep + tai san = Confidential (du tung phan la Unclassified)
+  4. Default: Unclassified. Chi nang cap khi co can cu.
+  5. KHONG BAO GIO ha cap mat tu dong -- chi con nguoi co tham quyen ha cap.
+  6. Moi quyet dinh phan loai PHAI co reasoning day du.
+
+  KIEM SOAT TRUY CAP:
+  - Moi yeu cau truy cap phai qua permission check
+  - Deny = log + giai thich ly do + thong bao
+  - Allow = log + ghi trace
+  - Suspicious pattern (nhieu deny lien tuc) = alert admin
+
+  Output JSON: {"classification_level": "...", "reasoning": "...", "keywords_found": [...], "location_sensitive": bool, "aggregation_risk": bool}
+
+# UNRESTRICTED READ -- Top Secret clearance
+read_node_labels:
+  - Case
+  - Applicant
+  - Bundle
+  - Document
+  - ExtractedEntity
+  - TTHCSpec
+  - RequiredComponent
+  - ProcedureCategory
+  - Article
+  - Clause
+  - Point
+  - Law
+  - Decree
+  - Circular
+  - Organization
+  - Position
+  - Gap
+  - Citation
+  - Opinion
+  - Decision
+  - Summary
+  - Draft
+  - ConsultRequest
+  - AuditEvent
+  - AgentStep
+  - Task
+  - Classification
+  - Template
+
+read_edge_types:
+  - SUBMITTED_BY
+  - HAS_BUNDLE
+  - CONTAINS
+  - EXTRACTED
+  - MATCHES_TTHC
+  - REQUIRES
+  - GOVERNED_BY
+  - SATISFIES
+  - HAS_GAP
+  - GAP_FOR
+  - CITES
+  - HAS_OPINION
+  - HAS_DECISION
+  - HAS_SUMMARY
+  - HAS_DRAFT
+  - HAS_CONSULT_REQUEST
+  - CONSULTED
+  - ASSIGNED_TO
+  - PROCESSED_BY
+  - DEPENDS_ON
+  - AUTHORIZED_FOR
+  - BELONGS_TO
+  - PARENT_OF
+  - AMENDED_BY
+  - SUPERSEDED_BY
+  - REFERENCES
+  - CLASSIFIED_AS
+  - AUDITS
+  - HAS_CLAUSE
+  - HAS_POINT
+
+write_node_labels:
+  - Classification
+  - AuditEvent
+  - AgentStep
+
+write_edge_types:
+  - CLASSIFIED_AS
+  - AUDITS
+  - PROCESSED_BY
+
+# NO MASKS -- sees everything
+property_masks: {}
+forbidden_properties: []
+
+clearance_cap: 3  # TOP_SECRET
+max_traversal_depth: 6
+max_iterations: 5
+max_tokens_budget: 20000
+
+allowed_tools:
+  - get_case
+  - case_documents
+  - case_subgraph
+  - case_full_context
+  - case_applicant_data
+  - case_current_classification
+  - create_classification
+  - add_audit_event
+  - update_case_property
+  - add_agent_step
+  - audit_log

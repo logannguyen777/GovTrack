@@ -1,5 +1,18 @@
 # Agent Implementation: Classifier (Agent 3)
 
+> **Status:** DONE (2026-04-12)
+> - [x] Permission profile YAML (`profiles/classifier_agent.yaml`)
+> - [x] System prompt (few-shot Vietnamese, 5 TTHC examples)
+> - [x] Gremlin templates (`case_doc_types_summary`, `tthc_list_all`)
+> - [x] Agent class (`implementations/classifier.py`)
+> - [x] Orchestrator registration
+> - [x] Grounding check (reject non-existent TTHC codes)
+> - [x] MATCHES_TTHC edge write
+> - [x] Case.urgency update
+> - [x] Unknown TTHC escalation
+> - [x] JSON parse retry logic
+> - [x] Import verification passed
+
 ## 1. Objective
 
 Match a case to its correct TTHC code from the national administrative procedures catalog. Uses few-shot prompting with known TTHC examples. Also determines urgency level and provides initial classification suggestion for SecurityOfficer. Output must be grounded -- it must match an existing TTHCSpec vertex in the Knowledge Graph.

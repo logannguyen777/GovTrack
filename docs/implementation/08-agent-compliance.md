@@ -1,5 +1,15 @@
 # Agent Implementation: Compliance (Agent 4)
 
+**Implementation Status:**
+- [x] Model configuration
+- [x] System prompt
+- [x] Permission profile YAML (`backend/src/agents/profiles/compliance_agent.yaml`)
+- [x] Gremlin templates (`case_compliance_context`, `case_find_missing_components`, `update_case_property`, `link_gap_to_requirement`)
+- [x] Agent implementation (`backend/src/agents/implementations/compliance.py`)
+- [x] Agent registration in orchestrator
+- [ ] Unit tests (`tests/agents/test_compliance.py`)
+- [ ] E2E test with seeded data
+
 ## 1. Objective
 
 The heart of GovFlow. Check whether a case bundle has all required components per the matched TTHC specification. Detect gaps, cite governing law for each gap via LegalLookup, evaluate conditional requirements, and compute a compliance score. This agent bridges the Context Graph (case data) with the Knowledge Graph (TTHC requirements and legal articles).

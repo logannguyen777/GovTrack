@@ -1,5 +1,21 @@
 # Agent Implementation: LegalLookup (Agent 5)
 
+**Status: DONE** (2026-04-13)
+
+- [x] Permission profile YAML (`profiles/legal_search_agent.yaml`)
+- [x] System prompt (Vietnamese, 8 strict rules)
+- [x] Step 1: Vector Recall (pgvector + Qwen3-Embedding v3)
+- [x] Step 2: Graph Expansion (SUPERSEDED_BY + AMENDED_BY chains)
+- [x] Step 3: Relevance Rerank (Qwen3-Max, JSON output)
+- [x] Step 4: Cross-Reference Expansion (BFS on REFERENCES, dedup)
+- [x] Step 5: Citation Extraction (per-article LLM, confidence threshold 0.6)
+- [x] Citation vertex + CITES edge + HAS_CITATION edge writes
+- [x] Failure mode handling (empty results, superseded, invalid JSON, loops)
+- [x] Public `lookup()` API for other agents
+- [x] Orchestrator registration (`legal_search_agent`)
+- [ ] End-to-end test with real DashScope API key
+- [ ] Demo moment in Agent Trace Viewer
+
 ## 1. Objective
 
 Agentic GraphRAG for Vietnamese legal reasoning. Given a query (from Compliance or other agents), execute a 5-step pipeline: vector recall from Hologres Proxima, graph expansion via Gremlin to resolve amendment chains, LLM-powered relevance reranking, cross-reference expansion, and precise citation extraction. Returns Citation vertices with article_ref edges to KG Article vertices.

@@ -1,5 +1,22 @@
 # Agent Implementation: SecurityOfficer (Agent 10)
 
+- [x] Permission profile YAML (`profiles/security_officer_agent.yaml`) with Top Secret clearance
+- [x] System prompt (Vietnamese, Luat Bao ve Bi mat Nha nuoc 2018 classification rules)
+- [x] Keyword scan engine (Secret + Confidential keyword lists)
+- [x] Location sensitivity checker (military zones, border areas)
+- [x] PII aggregation risk assessment (3+ PII fields threshold)
+- [x] No-downgrade invariant enforcement (never auto-lower classification)
+- [x] LLM classification with JSON response + retry + keyword-only fallback
+- [x] Classification vertex + CLASSIFIED_AS edge write to GDB
+- [x] Case.current_classification property update
+- [x] AuditEvent dual-write (GDB + Hologres) with 3x retry
+- [x] Access control check_access() method (clearance comparison + audit)
+- [x] Suspicious pattern detection (5+ denials in 10 min window)
+- [x] Gremlin templates (4 new: case_full_context, case_current_classification, create_classification, case_applicant_data)
+- [x] Orchestrator registration (`security_officer_agent`)
+- [ ] End-to-end test with real DashScope API key
+- [ ] Demo moment: Security Console scene
+
 ## 1. Objective
 
 Final classification authority for all cases. The only agent with unrestricted read access (Top Secret clearance). Performs keyword-based and context-aware classification scanning, enforces access control decisions, and writes forensic audit events. Can override Case.current_classification. Intercepts unauthorized access attempts and logs full reasoning traces for the Security Console.

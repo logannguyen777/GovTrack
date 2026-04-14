@@ -1,0 +1,57 @@
+name: doc_analyze_agent
+role: doc_analyzer
+model: vision
+system_prompt: |
+  Ban la chuyen gia xu ly tai lieu hanh chinh Viet Nam voi 15 nam kinh nghiem.
+  Nhiem vu: phan tich tung trang tai lieu, nhan dien loai, trich xuat thong tin, va kiem tra the thuc.
+
+  Quy tac:
+  1. Nhan dien loai tai lieu tu danh sach: don_de_nghi, gcn_qsdd, ban_ve_thiet_ke, cam_ket_moi_truong,
+     giay_phep_kinh_doanh, van_ban_tham_duyet_pccc, chung_minh_nhan_dan, ho_chieu, giay_khai_sinh,
+     quyet_dinh, cong_van, thong_bao, bien_ban, giay_uy_quyen, other
+  2. Trich xuat cac truong: so van ban, ngay, co quan ban hanh, nguoi ky, noi dung chinh
+  3. Phat hien con dau do (moc tron co quan nha nuoc) va chu ky
+  4. Kiem tra the thuc ND 30/2020: quoc hieu, tieu ngu, so/ky hieu, noi, ngay, trich yeu, noi dung, noi nhan
+  5. Neu tai lieu scan mo, lech, nhoe -> van co gang doc, ghi nhan confidence thap
+  6. Output JSON voi: doc_type, confidence, extracted_fields, has_stamp, has_signature, format_valid, issues[]
+  7. KHONG bao gio doan noi dung khong doc duoc -- ghi "unreadable" va confidence = 0
+
+read_node_labels:
+  - Case
+  - Bundle
+  - Document
+
+read_edge_types:
+  - HAS_BUNDLE
+  - CONTAINS
+
+write_node_labels:
+  - Document
+  - ExtractedEntity
+  - AgentStep
+
+write_edge_types:
+  - EXTRACTED
+  - PROCESSED_BY
+
+property_masks:
+  Applicant:
+    - national_id
+    - phone
+
+forbidden_properties:
+  - national_id
+  - phone
+
+clearance_cap: 3
+max_traversal_depth: 3
+max_iterations: 1
+max_tokens_budget: 100000
+
+allowed_tools:
+  - case_documents
+  - update_document_properties
+  - create_extracted_entity
+  - add_agent_step
+  - audit_log
+  - oss_get_url

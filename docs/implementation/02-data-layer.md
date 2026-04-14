@@ -1,5 +1,17 @@
 # 02 - Data Layer: Knowledge Graph, Vector Store, Object Storage
 
+> **Status: DONE** (2026-04-12)
+> - [x] Hologres/PostgreSQL DDL — 7 tables with indexes (`infra/postgres/init.sql`)
+> - [x] GDB schema — 33 vertex labels + `_kg_id` index (`scripts/create_gdb_schema.py`)
+> - [x] GDB edge types — 39 edge types documented (`scripts/create_gdb_edges.py`)
+> - [x] Legal KG ingestion — 10,688 vertices + 104,666 edges (`scripts/load_kg_legal.py`)
+> - [x] TTHC KG ingestion — 37 vertices + 51 edges (`scripts/load_kg_tthc.py`)
+> - [x] Org hierarchy — 8 orgs + 8 positions (`scripts/seed_organizations.py`)
+> - [x] Seed users — 6 test users (`scripts/seed_users.py` + `init.sql`)
+> - [x] Law chunks — 869 rows in law_chunks (`scripts/embed_chunks.py`)
+> - [x] Gremlin Template Library — 30 templates (`backend/src/graph/templates.py`)
+> - [ ] DashScope embeddings — pending API key (re-run `embed_chunks.py` when key is set)
+
 ## Muc tieu (Objective)
 
 Populate the GDB knowledge graph with legal/organizational/TTHC schema (30+ vertex labels,

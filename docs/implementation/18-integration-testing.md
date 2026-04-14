@@ -1,5 +1,16 @@
 # 18 - Integration Testing: E2E, Permissions, Benchmarks, Smoke Tests
 
+> **Status: IMPLEMENTED** (2026-04-13)
+> - [x] Test infrastructure (conftest.py with real fixtures)
+> - [x] 23 permission negative tests (test_permission_negative.py)
+> - [x] 5 E2E TTHC tests (test_e2e_tthc.py, requires DashScope)
+> - [x] 5 agent benchmarks (test_agent_benchmarks.py, requires DashScope)
+> - [x] 3 WebSocket integration tests (test_websocket.py)
+> - [x] 13 demo reliability tests (test_demo_reliability.py)
+> - [x] 10 Playwright smoke tests (frontend/tests/smoke.spec.ts)
+> - [x] pytest markers configured (integration, requires_dashscope, slow, benchmark)
+> - Result: 56 passed, 15 skipped (DashScope not available), 0 failed
+
 ## Muc tieu (Objective)
 
 Implement the full test suite: E2E happy-path tests for all 5 TTHC, 20+ permission

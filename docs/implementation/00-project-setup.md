@@ -1,5 +1,14 @@
 # 00 - Project Setup: Monorepo, Dependencies, Docker Compose
 
+> **Status: DONE** (2026-04-12)
+> - [x] Monorepo structure (backend/, frontend/, infra/, data/, scripts/, docs/)
+> - [x] Python dependencies (pyproject.toml + .venv)
+> - [x] Node dependencies (package.json + node_modules)
+> - [x] Docker Compose (infra/docker-compose.yml)
+> - [x] Environment config (.env.example + config.py)
+> - [x] FastAPI skeleton (main.py + /health)
+> - [x] Next.js skeleton (layout.tsx + page.tsx)
+
 ## Muc tieu (Objective)
 
 Initialize the GovFlow monorepo structure, install all Python and Node dependencies,

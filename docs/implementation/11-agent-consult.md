@@ -1,5 +1,12 @@
 # Agent Implementation: Consult (Agent 7)
 
+- [x] Permission profile YAML (`consult_agent.yaml`)
+- [x] Gremlin templates (7 consult support templates)
+- [x] Agent implementation (`consult.py`)
+- [x] Pipeline integration (orchestrator `PIPELINE_FULL`)
+- [x] API endpoints (opinion submit, aggregate, list requests)
+- [x] Pydantic schemas (`ConsultOpinionSubmit`, `ConsultRequestResponse`)
+
 ## 1. Objective
 
 Auto-draft cross-department consultation requests with pre-summarized case context, and aggregate opinions after responses. Replaces the traditional "cong van xin y kien" process that takes 3-7 days with a minutes-long automated flow. The agent reads only case summaries and gaps (never full document content) to enforce information minimization.

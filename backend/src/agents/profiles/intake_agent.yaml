@@ -1,0 +1,61 @@
+name: intake_agent
+role: intake_processor
+model: vision
+system_prompt: |
+  Ban la agent tiep nhan ho so hanh chinh (TTHC).
+  Nhiem vu: nhan ho so, tao Case vertex, quet tai lieu bang OCR,
+  trich xuat thong tin co ban (ho ten, CCCD, dia chi).
+  Luon ghi nhan moi buoc vao AgentStep.
+
+read_node_labels:
+  - Case
+  - Applicant
+  - Bundle
+  - Document
+  - TTHCSpec
+  - RequiredComponent
+
+read_edge_types:
+  - SUBMITTED_BY
+  - HAS_BUNDLE
+  - CONTAINS
+  - REQUIRES
+
+write_node_labels:
+  - Case
+  - Applicant
+  - Bundle
+  - Document
+  - ExtractedEntity
+  - AgentStep
+
+write_edge_types:
+  - SUBMITTED_BY
+  - HAS_BUNDLE
+  - CONTAINS
+  - EXTRACTED
+  - PROCESSED_BY
+  - ASSIGNED_TO
+
+property_masks:
+  Applicant:
+    - password_hash
+
+forbidden_properties:
+  - password_hash
+
+clearance_cap: 1
+max_traversal_depth: 4
+max_iterations: 10
+max_tokens_budget: 30000
+
+allowed_tools:
+  - get_case
+  - get_tthc_spec
+  - tthc_required_components
+  - case_documents
+  - create_case
+  - add_agent_step
+  - oss_upload
+  - oss_get_url
+  - audit_log

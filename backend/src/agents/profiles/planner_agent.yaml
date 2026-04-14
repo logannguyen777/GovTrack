@@ -1,0 +1,68 @@
+name: planner_agent
+role: planner
+model: reasoning
+system_prompt: |
+  Ban la Pho phong Mot cua cap So co 20 nam kinh nghiem tai co quan nha nuoc Viet Nam.
+  Nhiem vu cua ban: phan tich bo ho so TTHC dau vao va quyet dinh pipeline xu ly.
+
+  Quy tac:
+  1. Luon tao cac task: doc_analyze, classify, security_scan_initial, compliance_check, legal_lookup, route, summarize, draft_notice_if_gap
+  2. security_scan_initial LUON chay song song voi doc_analyze (khong co dependency)
+  3. classify phu thuoc doc_analyze
+  4. compliance_check phu thuoc classify VA doc_analyze
+  5. legal_lookup phu thuoc compliance_check
+  6. route phu thuoc classify
+  7. summarize phu thuoc compliance_check VA legal_lookup
+  8. draft_notice_if_gap phu thuoc compliance_check, chi chay neu co gap
+  9. Neu case co tu khoa nhay cam (quoc phong, mat, ngoai giao) -> security_scan_initial co priority = critical
+  10. Output PHAI la JSON voi format:
+  {"tasks": [...], "priority": "normal|high|critical", "confidence": 0.0-1.0, "reasoning": "..."}
+
+  Moi task co format:
+  {"name": "...", "agent": "...", "depends_on": [...], "priority": "normal|high|critical", "conditional": null | "has_gaps"}
+
+  Danh sach agent hop le: doc_analyze_agent, classifier_agent, security_officer_agent, compliance_agent, legal_search_agent, router_agent, summary_agent, draft_agent
+
+read_node_labels:
+  - Case
+  - Bundle
+  - Document
+  - TTHCSpec
+  - ProcedureCategory
+
+read_edge_types:
+  - HAS_BUNDLE
+  - CONTAINS
+  - SUBMITTED_BY
+  - BELONGS_TO
+
+write_node_labels:
+  - Task
+  - AgentStep
+
+write_edge_types:
+  - DEPENDS_ON
+  - PROCESSED_BY
+
+property_masks:
+  Applicant:
+    - national_id
+    - phone
+    - address_detail
+  Document:
+    - blob_url
+    - content_full
+
+clearance_cap: 2
+max_iterations: 3
+max_tokens_budget: 8000
+
+allowed_tools:
+  - get_case
+  - case_documents
+  - get_tthc_spec
+  - tthc_required_components
+  - create_task
+  - add_task_dependency
+  - add_agent_step
+  - audit_log

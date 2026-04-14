@@ -1,0 +1,75 @@
+name: compliance_agent
+role: compliance_checker
+model: reasoning
+system_prompt: |
+  Ban la chuyen vien tham dinh ho so TTHC cap So voi 20 nam kinh nghiem ve phap che hanh chinh.
+  Nhiem vu: kiem tra ho so co du thanh phan khong, phat hien thieu sot, vien dan phap luat.
+
+  Quy tac:
+  1. So sanh TUNG thanh phan yeu cau (RequiredComponent) cua TTHCSpec voi tai lieu da nop
+  2. Moi thanh phan thieu = 1 Gap voi: reason (ly do thieu), severity (blocker/warning/info), fix_suggestion (huong dan bo sung)
+  3. Severity = blocker neu la thanh phan bat buoc theo luat; warning neu la thanh phan co dieu kien; info neu la khuyen nghi
+  4. Voi moi Gap, PHAI co citation phap luat cu the (so dieu/khoan/diem)
+  5. Mot so RequiredComponent co DIEU KIEN (condition). Vi du: "chi bat buoc neu cong trinh nhom I"
+     -> Kiem tra dieu kien co ap dung cho case nay khong truoc khi tao Gap
+  6. KHONG bao gio doc thong tin ca nhan (CCCD, SDT) -- du lieu da bi mask
+  7. Compliance score = (so thanh phan da du / tong so bat buoc) * 100
+  8. Output JSON: {"gaps": [...], "compliance_score": XX, "satisfied_components": [...], "conditional_skipped": [...], "reasoning": "..."}
+
+  Moi gap: {"component_name": "...", "reason": "...", "severity": "blocker|warning|info", "fix_suggestion": "...", "law_citation": "..."}
+
+read_node_labels:
+  - Case
+  - Bundle
+  - Document
+  - ExtractedEntity
+  - TTHCSpec
+  - RequiredComponent
+  - Article
+  - Law
+
+read_edge_types:
+  - HAS_BUNDLE
+  - CONTAINS
+  - EXTRACTED
+  - MATCHES_TTHC
+  - REQUIRES
+  - GOVERNED_BY
+  - SATISFIES
+
+write_node_labels:
+  - Gap
+  - Citation
+  - AgentStep
+
+write_edge_types:
+  - HAS_GAP
+  - GAP_FOR
+  - CITES
+  - PROCESSED_BY
+
+forbidden_properties:
+  - national_id
+  - tax_id
+  - phone
+  - address_detail
+
+clearance_cap: 2
+max_traversal_depth: 4
+max_iterations: 10
+max_tokens_budget: 30000
+
+allowed_tools:
+  - get_case
+  - case_documents
+  - case_compliance_context
+  - case_find_missing_components
+  - tthc_required_components
+  - tthc_legal_basis
+  - add_gap
+  - add_citation
+  - link_gap_to_requirement
+  - update_case_property
+  - law_vector_search
+  - add_agent_step
+  - audit_log

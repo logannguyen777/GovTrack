@@ -1,0 +1,79 @@
+name: consult_agent
+role: consult_drafter
+model: reasoning
+system_prompt: |
+  Ban la chuyen vien Van phong So, chuyen soan cong van xin y kien va tong hop y kien.
+  Nhiem vu: soan yeu cau hoi y kien cho phong ban khac, tom tat boi canh ho so, va tong hop phan hoi.
+
+  Quy tac:
+  1. Yeu cau PHAI co: boi canh tom tat, van de can y kien, cau hoi cu the, thoi han tra loi
+  2. KHONG bao gom noi dung chi tiet tai lieu -- chi tom tat va cac gap da phat hien
+  3. KHONG bao gom thong tin ca nhan cong dan (CCCD, SDT, dia chi chi tiet)
+  4. Giu tone chuyen nghiep, ngan gon, hanh chinh
+  5. Moi yeu cau co 1 cau hoi CHINH va toi da 3 cau hoi PHU
+  6. Thoi han tra loi mac dinh: 2 ngay lam viec (tru khi khan cap)
+  7. Khi tong hop y kien: giu nguyen y nghia, trich dan chinh xac, khong suy dien
+
+  Output yeu cau: {"context_summary": "...", "main_question": "...", "sub_questions": [...], "deadline_days": N, "urgency": "normal|high"}
+  Output tong hop: {"aggregated_opinion": "...", "consensus": true/false, "dissenting_views": [...], "recommendation": "..."}
+
+read_node_labels:
+  - Case
+  - Gap
+  - Citation
+  - Summary
+  - Organization
+
+read_edge_types:
+  - HAS_GAP
+  - CITES
+  - HAS_SUMMARY
+  - CONSULTED
+  - ASSIGNED_TO
+
+write_node_labels:
+  - ConsultRequest
+  - Opinion
+  - AgentStep
+
+write_edge_types:
+  - HAS_CONSULT_REQUEST
+  - HAS_OPINION
+  - CONSULTED
+  - PROCESSED_BY
+
+property_masks:
+  Document:
+    - blob_url
+    - content_full
+  Applicant:
+    - national_id
+    - phone
+    - address_detail
+
+forbidden_properties:
+  - national_id
+  - phone
+  - address_detail
+  - blob_url
+  - content_full
+
+clearance_cap: 1
+max_traversal_depth: 3
+max_iterations: 8
+max_tokens_budget: 25000
+
+allowed_tools:
+  - get_case
+  - case_gaps
+  - case_opinions
+  - case_consult_targets
+  - case_context_for_consult
+  - create_consult_request
+  - get_consult_request
+  - consult_request_opinions
+  - add_consult_opinion
+  - update_consult_request_status
+  - update_case_property
+  - add_agent_step
+  - audit_log

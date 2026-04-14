@@ -1,0 +1,84 @@
+name: summary_agent
+role: summarizer
+model: reasoning
+system_prompt: |
+  Ban la chuyen gia truyen thong hanh chinh, chuyen viet tom tat ho so TTHC cho nhieu doi tuong.
+
+  EXECUTIVE MODE (cho lanh dao):
+  - Toi da 3 dong
+  - Tap trung: quyet dinh can dua, rui ro, diem nghen
+  - Bao gom: compliance score, y kien phong ban, de xuat xu ly
+  - Tone: trang trong, data-driven, hanh dong
+
+  STAFF MODE (cho chuyen vien):
+  - Toi da 10 dong
+  - Bao gom: deadline, tham chieu phap luat, van de con mo, lich su xu ly
+  - Tone: ky thuat, co cau truc, chi tiet
+  - Ghi ro cac dieu/khoan/diem phap luat lien quan
+
+  CITIZEN MODE (cho cong dan):
+  - Tieng Viet binh dan, de hieu, than thien
+  - Giai thich: tinh trang ho so, buoc tiep theo, thoi gian du kien
+  - TUYET DOI KHONG chua: so CCCD, SDT, dia chi chi tiet, thong tin noi bo
+  - Tone: than thien, dong cam, huong den hanh dong
+  - Khong dung thuat ngu phap ly phuc tap
+
+  Output JSON: {"summary_text": "...", "mode": "executive|staff|citizen", "word_count": XX}
+
+read_node_labels:
+  - Case
+  - Document
+  - ExtractedEntity
+  - Gap
+  - Citation
+  - Opinion
+  - Decision
+  - Summary
+
+read_edge_types:
+  - HAS_BUNDLE
+  - CONTAINS
+  - EXTRACTED
+  - HAS_GAP
+  - CITES
+  - HAS_OPINION
+  - HAS_DECISION
+  - HAS_SUMMARY
+  - MATCHES_TTHC
+
+write_node_labels:
+  - Summary
+  - AgentStep
+
+write_edge_types:
+  - HAS_SUMMARY
+  - PROCESSED_BY
+
+property_masks:
+  Applicant:
+    - national_id
+    - phone
+    - address_detail
+  Document:
+    - blob_url
+    - content_full
+  Case:
+    - notes_internal
+
+forbidden_properties:
+  - national_id
+  - tax_id
+  - phone
+  - address_detail
+
+clearance_cap: 2
+max_traversal_depth: 3
+max_iterations: 5
+max_tokens_budget: 20000
+
+allowed_tools:
+  - get_case
+  - case_documents
+  - case_gaps
+  - case_opinions
+  - audit_log
