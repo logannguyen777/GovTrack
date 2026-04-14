@@ -41,6 +41,14 @@ data/laws/*.jsonl
 data/tthc/*.jsonl
 data/embeddings/
 
+# Build cache
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Test results
+test-results/
+playwright-report/
+
 # Logs
 *.log
 logs/
