@@ -1,0 +1,153 @@
+name: Deploy to Production (ACK)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag to deploy (e.g. sha-abc1234 or v1.2.0)"
+        required: true
+        type: string
+      component:
+        description: "Component to deploy"
+        required: true
+        type: choice
+        options:
+          - both
+          - backend
+          - frontend
+        default: both
+      dry_run:
+        description: "Dry-run only (kubectl --dry-run=client)"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.component }} @ ${{ inputs.image_tag }}
+    runs-on: ubuntu-24.04
+    environment: production
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Alibaba Cloud OIDC Authentication ─────────────────────────────────
+      # TODO: Set up Alibaba Cloud RAM OIDC trust before using this step.
+      # See: https://www.alibabacloud.com/help/en/ram/user-guide/create-an-oidc-idp
+      #
+      # Required GitHub secrets:
+      #   ALIBABA_CLOUD_ROLE_ARN      — e.g. acs:ram::123456:role/GovFlowDeploy
+      #   ALIBABA_CLOUD_REGION        — e.g. ap-southeast-1
+      #   ACK_CLUSTER_ID              — ACK cluster ID
+      #
+      # If the official OIDC action is unavailable, use the placeholder below
+      # or the aliyun CLI directly.
+      - name: Authenticate to Alibaba Cloud (OIDC)
+        # TODO: Replace with official action when available:
+        # https://github.com/aliyun/configure-aliyun-credentials-action
+        uses: aliyun/configure-aliyun-credentials-action@v1
+        with:
+          role-arn: ${{ secrets.ALIBABA_CLOUD_ROLE_ARN }}
+          oidc-provider-arn: ${{ secrets.ALIBABA_CLOUD_OIDC_PROVIDER_ARN }}
+          audience: actions.github.com
+          role-session-name: GovFlowDeploy-${{ github.run_id }}
+        continue-on-error: false
+
+      # ── Install aliyun CLI + kubectl ──────────────────────────────────────
+      - name: Set up aliyun CLI
+        run: |
+          curl -sSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz | tar xz
+          sudo mv aliyun /usr/local/bin/
+          aliyun version
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: "v1.29.0"
+
+      - name: Configure kubectl for ACK
+        run: |
+          aliyun cs GET /k8s/${{ secrets.ACK_CLUSTER_ID }}/user_config \
+            --region ${{ secrets.ALIBABA_CLOUD_REGION }} \
+            | python3 -c "
+          import sys, json
+          cfg = json.load(sys.stdin)
+          with open('$HOME/.kube/config', 'w') as f:
+              f.write(cfg.get('config', ''))
+          "
+          kubectl config current-context
+          kubectl get nodes -n govflow
+
+      # ── Deploy backend ─────────────────────────────────────────────────────
+      - name: Deploy backend image
+        if: inputs.component == 'backend' || inputs.component == 'both'
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}/govflow-backend:${{ inputs.image_tag }}"
+          echo "Deploying backend: $IMAGE"
+          kubectl set image deployment/govflow-backend \
+            backend="$IMAGE" \
+            -n govflow \
+            ${{ inputs.dry_run && '--dry-run=client' || '' }}
+
+      - name: Wait for backend rollout
+        if: (inputs.component == 'backend' || inputs.component == 'both') && !inputs.dry_run
+        run: |
+          kubectl rollout status deployment/govflow-backend \
+            -n govflow \
+            --timeout=5m
+
+      # ── Deploy frontend ────────────────────────────────────────────────────
+      - name: Deploy frontend image
+        if: inputs.component == 'frontend' || inputs.component == 'both'
+        run: |
+          IMAGE="ghcr.io/${{ github.repository }}/govflow-frontend:${{ inputs.image_tag }}"
+          echo "Deploying frontend: $IMAGE"
+          kubectl set image deployment/govflow-frontend \
+            frontend="$IMAGE" \
+            -n govflow \
+            ${{ inputs.dry_run && '--dry-run=client' || '' }}
+
+      - name: Wait for frontend rollout
+        if: (inputs.component == 'frontend' || inputs.component == 'both') && !inputs.dry_run
+        run: |
+          kubectl rollout status deployment/govflow-frontend \
+            -n govflow \
+            --timeout=5m
+
+      # ── Verify deployment ──────────────────────────────────────────────────
+      - name: Verify deployment
+        if: "!inputs.dry_run"
+        run: |
+          echo "=== Pod status ==="
+          kubectl get pods -n govflow -l app.kubernetes.io/name=govflow
+          echo ""
+          echo "=== Deployment status ==="
+          kubectl get deployments -n govflow
+          echo ""
+          echo "=== Recent events ==="
+          kubectl get events -n govflow --sort-by='.lastTimestamp' | tail -20
+
+      - name: Health smoke test
+        if: "!inputs.dry_run"
+        run: |
+          # Get the ingress IP/hostname
+          INGRESS_IP=$(kubectl get ingress govflow-ingress -n govflow \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || \
+            kubectl get ingress govflow-ingress -n govflow \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || \
+            echo "")
+          if [ -n "$INGRESS_IP" ]; then
+            echo "Checking health at $INGRESS_IP..."
+            curl -sSf -H "Host: govflow.example.vn" \
+              "http://$INGRESS_IP/healthz" | python3 -m json.tool
+          else
+            echo "No ingress IP yet — skipping smoke test"
+          fi
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "DEPLOYMENT FAILED — consider rolling back:"
+          echo "  kubectl rollout undo deployment/govflow-backend -n govflow"
+          echo "  kubectl rollout undo deployment/govflow-frontend -n govflow"

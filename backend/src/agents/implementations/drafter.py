@@ -24,14 +24,18 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
 import jinja2
 
-from ...database import async_gremlin_submit, pg_connection
+from ...database import pg_connection
+
+# async_gremlin_submit replaced by self._get_gdb().execute() per task 1.1
 from ..base import AgentResult, BaseAgent
 from ..orchestrator import register_agent
+from ..streaming import StreamingAgentEvent
 
 logger = logging.getLogger("govflow.agent.drafter")
 
@@ -83,8 +87,15 @@ def _has_pii(text: str) -> bool:
 ND30_REQUIRED_SECTIONS = [
     "quoc_hieu", "tieu_ngu", "ten_co_quan", "so_ky_hieu",
     "noi_ban_hanh", "ngay_thang", "trich_yeu", "noi_dung",
-    "noi_nhan", "nguoi_ky",
+    "noi_nhan", "nguoi_ky", "chu_ky_so",
 ]
+
+# Regex to detect the digital signature placeholder
+_DIGITAL_SIG_RE = re.compile(r"\[Ký số CA:")
+
+
+class DraftSignatureMissing(ValueError):
+    """Raised when the rendered ND30 document lacks the required digital signature placeholder."""
 
 TRICH_YEU_MAX_WORDS = 80
 
@@ -119,8 +130,146 @@ class DrafterAgent(BaseAgent):
 
     # ── ABC stub ────────────────────────────────────────────────
     async def build_messages(self, case_id: str) -> list[dict[str, Any]]:
-        """Required by ABC. Not used since run() is overridden."""
-        return [{"role": "system", "content": self.profile.system_prompt}]
+        """
+        Xây dựng messages cho drafter theo Nghị định 30/2020/NĐ-CP.
+
+        Lấy template_type, case_metadata, recipient và decision_content
+        từ Context Graph rồi nhúng vào user message để LLM soạn thảo
+        văn bản đúng cấu trúc: Quốc hiệu, Cơ quan, Số, Ngày, Nội dung,
+        Chữ ký, Nơi nhận.  run() được override trong production; hàm này
+        đảm bảo ABC contract và dùng được trong unit test / graceful fallback.
+        """
+        # Lấy case metadata
+        case_result = await self._get_gdb().execute(
+            "g.V().has('Case', 'case_id', cid).valueMap(true)",
+            {"cid": case_id},
+        )
+        case_vertex = case_result[0] if case_result else {}
+
+        # Lấy quyết định
+        decision_result = await self._get_gdb().execute(
+            "g.V().has('Case', 'case_id', cid).out('HAS_DECISION').valueMap(true)",
+            {"cid": case_id},
+        )
+        decision_data: dict[str, Any] = {}
+        if decision_result:
+            d = decision_result[0]
+            decision_data = {
+                "type": self._extract_prop(d, "type") or self._extract_prop(d, "decision_type"),
+                "reasoning": self._extract_prop(d, "reasoning"),
+            }
+        decision_type = decision_data.get("type") or "request_more"
+
+        # Lấy TTHC spec
+        tthc_match = await self._get_gdb().execute(
+            "g.V().has('Case', 'case_id', cid).out('MATCHES_TTHC').valueMap(true)",
+            {"cid": case_id},
+        )
+        tthc_data: dict[str, Any] = {}
+        if tthc_match:
+            tthc_data = {
+                "code": self._extract_prop(tthc_match[0], "code"),
+                "name": self._extract_prop(tthc_match[0], "name"),
+            }
+
+        tthc_code = tthc_data.get("code", "")
+        template_type = self._determine_doc_type(decision_type, tthc_code)
+
+        # Lấy các trích dẫn pháp lý (qua HAS_GAP → CITES)
+        citations = await self._get_gdb().execute(
+            "g.V().has('Case', 'case_id', cid)"
+            ".out('HAS_GAP').out('CITES').valueMap(true)",
+            {"cid": case_id},
+        )
+        citation_refs = []
+        for c in citations:
+            law_ref = self._extract_prop(c, "law_ref")
+            art_ref = self._extract_prop(c, "article_ref")
+            if law_ref:
+                citation_refs.append(
+                    f"{law_ref} Điều {art_ref}" if art_ref else law_ref
+                )
+
+        case_metadata = {
+            "case_id": case_id,
+            "status": self._extract_prop(case_vertex, "status"),
+            "tthc_name": tthc_data.get("name", ""),
+            "tthc_code": tthc_code,
+            "assigned_org": self._extract_prop(case_vertex, "assigned_org_name") or "Sở Xây dựng",
+            "province": self._extract_prop(case_vertex, "province") or "Tỉnh Bình Dương",
+        }
+
+        recipient = self._extract_prop(case_vertex, "applicant_name") or "Đơn vị nộp hồ sơ"
+
+        decision_content = {
+            "loai_quyet_dinh": decision_type,
+            "ly_do": decision_data.get("reasoning", ""),
+            "trich_dan_phap_luat": citation_refs,
+        }
+
+        system_prompt = (
+            "Bạn là chuyên viên soạn thảo văn bản hành chính theo "
+            "Nghị định 30/2020/NĐ-CP. Xuất văn bản đúng cấu trúc: "
+            "Quốc hiệu, Cơ quan, Số, Ngày, Nội dung, Chữ ký, Nơi nhận.\n\n"
+            + self.profile.system_prompt
+        )
+
+        user_content = json.dumps(
+            {
+                "template_type": template_type,
+                "case_metadata": case_metadata,
+                "recipient": recipient,
+                "decision_content": decision_content,
+                "instruction": (
+                    "Soạn văn bản hành chính đầy đủ theo thể thức ND 30/2020. "
+                    "Bao gồm DU THAO watermark và placeholder chữ ký số "
+                    "[Ký số CA: ...]. "
+                    "Trả về JSON: {\"content_markdown\": \"...\", "
+                    "\"doc_type\": \"...\", "
+                    "\"validation\": {\"valid\": true, \"issues\": []}, "
+                    "\"citizen_explanation\": \"...\"}."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+    # ── Streaming entry point ────────────────────────────────────
+    async def run_streaming(self, case_id: str) -> AsyncIterator[StreamingAgentEvent]:  # type: ignore[override]
+        """
+        Override: stream the LLM body-generation step token-by-token.
+        Other steps (template loading, validation, GDB writes) are unchanged.
+        """
+        queue: asyncio.Queue[StreamingAgentEvent | None] = asyncio.Queue()
+
+        async def _put(evt: StreamingAgentEvent) -> None:
+            await queue.put(evt)
+
+        async def _run_and_signal() -> AgentResult:
+            result = await self._run_with_streaming_callbacks(case_id, _put)
+            await queue.put(None)
+            return result
+
+        task = asyncio.create_task(_run_and_signal())
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item
+
+        result = await task
+        if result.status == "completed":
+            yield StreamingAgentEvent(
+                type="completed", agent_name=self.profile.name, result=result.output,
+            )
+        else:
+            yield StreamingAgentEvent(
+                type="failed", agent_name=self.profile.name, error=result.error,
+            )
 
     # ── Main entry point ────────────────────────────────────────
     async def run(self, case_id: str) -> AgentResult:
@@ -149,41 +298,41 @@ class DrafterAgent(BaseAgent):
                 citations,
                 existing_drafts,
             ) = await asyncio.gather(
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid).valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('MATCHES_TTHC').valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_DECISION').valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_OPINION').valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_SUMMARY').valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_GAP').valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_GAP').out('CITES').valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_DRAFT').valueMap(true)",
                     {"cid": case_id},
@@ -316,6 +465,13 @@ class DrafterAgent(BaseAgent):
                 )
                 validation = self._validate_nd30(full_document)
 
+            # ── Post-render hard check for digital signature placeholder ──
+            if not _DIGITAL_SIG_RE.search(full_document):
+                raise DraftSignatureMissing(
+                    f"Document for case {case_id} is missing required "
+                    "[Ký số CA: ...] placeholder after render + fix pass"
+                )
+
             # ── Step 11: Generate citizen explanation ────────────
             citizen_explanation = await self._generate_citizen_explanation(
                 case_data, decision_type, gaps,
@@ -325,7 +481,7 @@ class DrafterAgent(BaseAgent):
             draft_id = f"draft-{case_id}-{uuid.uuid4().hex[:8]}"
             now = datetime.now(UTC).isoformat()
 
-            await async_gremlin_submit(
+            await self._get_gdb().execute(
                 "g.addV('Draft')"
                 ".property('draft_id', did)"
                 ".property('content_markdown', content)"
@@ -424,6 +580,207 @@ class DrafterAgent(BaseAgent):
                 duration_ms=duration_ms,
                 error=str(e),
             )
+
+    # ── Streaming-enabled pipeline ──────────────────────────────
+
+    async def _run_with_streaming_callbacks(
+        self,
+        case_id: str,
+        emit: Callable[[StreamingAgentEvent], Awaitable[None]],
+    ) -> AgentResult:
+        """
+        Same pipeline as run() but replaces LLM body-generation call with
+        _stream_qwen so the document is streamed token-by-token via `emit`.
+        """
+
+        start_time = time.monotonic()
+        step_id = str(uuid.uuid4())
+
+        try:
+            (
+                case_result, tthc_match, decision_result, opinions,
+                summaries, gaps, citations, existing_drafts,
+            ) = await asyncio.gather(
+                self._get_gdb().execute("g.V().has('Case', 'case_id', cid).valueMap(true)", {"cid": case_id}),
+                self._get_gdb().execute("g.V().has('Case', 'case_id', cid).out('MATCHES_TTHC').valueMap(true)", {"cid": case_id}),
+                self._get_gdb().execute("g.V().has('Case', 'case_id', cid).out('HAS_DECISION').valueMap(true)", {"cid": case_id}),
+                self._get_gdb().execute("g.V().has('Case', 'case_id', cid).out('HAS_OPINION').valueMap(true)", {"cid": case_id}),
+                self._get_gdb().execute("g.V().has('Case', 'case_id', cid).out('HAS_SUMMARY').valueMap(true)", {"cid": case_id}),
+                self._get_gdb().execute("g.V().has('Case', 'case_id', cid).out('HAS_GAP').valueMap(true)", {"cid": case_id}),
+                self._get_gdb().execute("g.V().has('Case', 'case_id', cid).out('HAS_GAP').out('CITES').valueMap(true)", {"cid": case_id}),
+                self._get_gdb().execute("g.V().has('Case', 'case_id', cid).out('HAS_DRAFT').valueMap(true)", {"cid": case_id}),
+            )
+
+            if not case_result:
+                raise ValueError(f"Case {case_id} not found in graph")
+
+            if existing_drafts:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                usage = self.client.reset_usage()
+                await self._log_step(step_id=step_id, case_id=case_id, action="pipeline_drafter",
+                                     usage=usage, duration_ms=duration_ms, status="completed")
+                return AgentResult(
+                    agent_name=self.profile.name, case_id=case_id, status="completed",
+                    output=json.dumps({"reason": "draft_exists", "existing_draft_count": len(existing_drafts)}),
+                    usage=usage, duration_ms=duration_ms,
+                )
+
+            case_vertex = case_result[0]
+            decision_data: dict[str, Any] = {}
+            if decision_result:
+                d = decision_result[0]
+                decision_data = {
+                    "type": self._extract_prop(d, "type") or self._extract_prop(d, "decision_type"),
+                    "reasoning": self._extract_prop(d, "reasoning"),
+                }
+            decision_type = decision_data.get("type") or "request_more"
+
+            tthc_data: dict[str, Any] = {}
+            tthc_code = ""
+            if tthc_match:
+                tthc_data = {
+                    "code": self._extract_prop(tthc_match[0], "code"),
+                    "name": self._extract_prop(tthc_match[0], "name"),
+                    "authority_level": self._extract_prop(tthc_match[0], "authority_level"),
+                }
+                tthc_code = tthc_data["code"]
+
+            doc_type = self._determine_doc_type(decision_type, tthc_code)
+            case_data = self._build_case_data(case_vertex, tthc_data, decision_data,
+                                              summaries, gaps, citations, opinions)
+            template_data = await self._load_jinja_template(tthc_code, doc_type)
+            template_vars = self._prepare_template_vars(case_data, decision_data, tthc_data,
+                                                        citations, gaps, opinions)
+
+            # Body generation — stream if no Jinja2 template
+            if template_data and template_data.get("body_template"):
+                try:
+                    rendered_body = self._render_jinja_template(template_data["body_template"], template_vars)
+                except (jinja2.TemplateSyntaxError, jinja2.UndefinedError):
+                    rendered_body = await self._generate_body_with_llm_streaming(
+                        case_data, doc_type, decision_type, citations, gaps, emit,
+                    )
+            else:
+                rendered_body = await self._generate_body_with_llm_streaming(
+                    case_data, doc_type, decision_type, citations, gaps, emit,
+                )
+
+            full_document = self._build_nd30_document(rendered_body, case_data, doc_type, template_vars)
+            validation = self._validate_nd30(full_document)
+
+            if not validation["valid"]:
+                full_document = await self._fix_validation_issues(full_document, validation["issues"])
+                validation = self._validate_nd30(full_document)
+
+            # Post-render hard check for digital signature placeholder
+            if not _DIGITAL_SIG_RE.search(full_document):
+                raise DraftSignatureMissing(
+                    f"Document for case {case_id} is missing required "
+                    "[Ký số CA: ...] placeholder after render + fix pass (streaming path)"
+                )
+
+            citizen_explanation = await self._generate_citizen_explanation(case_data, decision_type, gaps)
+
+            draft_id = f"draft-{case_id}-{uuid.uuid4().hex[:8]}"
+            now = datetime.now(UTC).isoformat()
+            await self._get_gdb().execute(
+                "g.addV('Draft')"
+                ".property('draft_id', did).property('content_markdown', content)"
+                ".property('doc_type', dtype).property('decision_type', dec_type)"
+                ".property('validation_valid', vv).property('validation_issues', vi)"
+                ".property('citizen_explanation', cit_exp)"
+                ".property('status', 'draft').property('case_id', cid)"
+                ".property('created_at', ts).as('draft')"
+                ".V().has('Case', 'case_id', cid).addE('HAS_DRAFT').to('draft')",
+                {
+                    "did": draft_id, "content": full_document, "dtype": doc_type,
+                    "dec_type": decision_type, "vv": validation["valid"],
+                    "vi": json.dumps(validation.get("issues", []), ensure_ascii=False),
+                    "cit_exp": citizen_explanation, "cid": case_id, "ts": now,
+                },
+            )
+
+            duration_ms = (time.monotonic() - start_time) * 1000
+            usage = self.client.reset_usage()
+            await self._log_step(step_id=step_id, case_id=case_id, action="pipeline_drafter",
+                                 usage=usage, duration_ms=duration_ms, status="completed")
+            return AgentResult(
+                agent_name=self.profile.name, case_id=case_id, status="completed",
+                output=json.dumps({"draft_id": draft_id, "doc_type": doc_type,
+                                   "decision_type": decision_type, "validation": validation, "status": "draft"},
+                                  ensure_ascii=False),
+                tool_calls_count=0, usage=usage, duration_ms=duration_ms,
+            )
+
+        except Exception as exc:
+            duration_ms = (time.monotonic() - start_time) * 1000
+            await self._log_step(step_id=step_id, case_id=case_id, action="pipeline_drafter",
+                                 usage=self.client.reset_usage(), duration_ms=duration_ms,
+                                 status="failed", error=str(exc))
+            return AgentResult(
+                agent_name=self.profile.name, case_id=case_id, status="failed",
+                output="", duration_ms=duration_ms, error=str(exc),
+            )
+
+    async def _generate_body_with_llm_streaming(
+        self,
+        case_data: dict,
+        doc_type: str,
+        decision_type: str,
+        citations: list,
+        gaps: list,
+        emit: Callable[[StreamingAgentEvent], Awaitable[None]],
+    ) -> str:
+        """Stream document body generation — every text token forwarded via emit."""
+
+        citation_refs = []
+        for c in citations:
+            law_ref = c.get("law_ref", [""])[0] if isinstance(c.get("law_ref"), list) else c.get("law_ref", "")
+            art_ref = c.get("article_ref", [""])[0] if isinstance(c.get("article_ref"), list) else c.get("article_ref", "")
+            if law_ref:
+                citation_refs.append(f"{law_ref} Dieu {art_ref}" if art_ref else law_ref)
+
+        gap_reasons = []
+        for g in gaps:
+            desc = g.get("description", [""])[0] if isinstance(g.get("description"), list) else g.get("description", "")
+            if desc:
+                gap_reasons.append(desc)
+
+        messages = [
+            {"role": "system", "content": self.profile.system_prompt},
+            {
+                "role": "user",
+                "content": json.dumps({
+                    "doc_type": doc_type, "decision_type": decision_type,
+                    "tthc_name": case_data.get("tthc_name", ""),
+                    "case_summary": case_data.get("staff_summary", ""),
+                    "citations": citation_refs, "gaps": gap_reasons,
+                    "instruction": (
+                        "Soan noi dung chinh cua van ban. "
+                        "Chi phan THAN VAN BAN, KHONG bao gom header/footer/quoc hieu/tieu ngu. "
+                        "Chi su dung cac trich dan phap luat da cho, KHONG tu tao them."
+                    ),
+                }, ensure_ascii=False),
+            },
+        ]
+
+        async def _on_thinking(chunk: str) -> None:
+            await emit(StreamingAgentEvent(
+                type="thinking_chunk", agent_name=self.profile.name, delta=chunk,
+            ))
+
+        async def _on_text(chunk: str) -> None:
+            await emit(StreamingAgentEvent(
+                type="text_chunk", agent_name=self.profile.name, delta=chunk,
+            ))
+
+        response = await self._stream_qwen(
+            model=self.profile.model,
+            messages=messages,
+            on_thinking=_on_thinking,
+            on_text=_on_text,
+        )
+        return response["content"]
 
     # ── Document type determination ─────────────────────────────
 
@@ -612,7 +969,7 @@ class DrafterAgent(BaseAgent):
 
         # Trich yeu (max 80 words)
         tthc_name = template_vars.get("tthc_name", "")
-        trich_yeu = f"V/v {tthc_name}" if tthc_name else f"V/v xu ly ho so"
+        trich_yeu = f"V/v {tthc_name}" if tthc_name else "V/v xu ly ho so"
         trich_yeu_words = trich_yeu.split()
         if len(trich_yeu_words) > TRICH_YEU_MAX_WORDS:
             trich_yeu = " ".join(trich_yeu_words[:TRICH_YEU_MAX_WORDS])
@@ -643,6 +1000,8 @@ class DrafterAgent(BaseAgent):
             f"**{template_vars.get('signer_title', 'GIAM DOC')}**\n"
             f"*(Ky so)*\n"
             f"**{template_vars.get('signer_name', '___')}**\n"
+            f"\n"
+            f"[Ký số CA: {org_name}]\n"
             f"\n"
             f"---\n"
             f"*DU THAO - Chua phat hanh*\n"
@@ -684,6 +1043,10 @@ class DrafterAgent(BaseAgent):
         # 7. DU THAO watermark
         if "DU THAO" not in document:
             issues.append("Thieu danh dau DU THAO")
+
+        # 8. Digital signature placeholder (ND 30/2020 + chu_ky_so requirement)
+        if not _DIGITAL_SIG_RE.search(document):
+            issues.append("Thieu placeholder chu ky so [Ky so CA: ...]")
 
         return {"valid": len(issues) == 0, "issues": issues}
 

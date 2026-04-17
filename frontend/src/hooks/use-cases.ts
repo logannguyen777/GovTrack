@@ -13,6 +13,18 @@ import type {
   BundleResponse,
 } from "@/lib/types";
 
+// ---- Batch finalize types ----
+export interface BatchFinalizeRequest {
+  case_ids: string[];
+  decision: "approve" | "reject" | "request_supplement";
+  notes?: string;
+}
+
+export interface BatchFinalizeResponse {
+  succeeded: string[];
+  failed: Array<{ case_id: string; error: string }>;
+}
+
 // ---- Query key factory ----
 export const caseKeys = {
   all: ["cases"] as const,
@@ -90,6 +102,25 @@ export function useFinalizeCase() {
     onSuccess: (_data, caseId) => {
       queryClient.invalidateQueries({ queryKey: caseKeys.all });
       queryClient.invalidateQueries({ queryKey: caseKeys.detail(caseId) });
+    },
+  });
+}
+
+/**
+ * Batch-finalize multiple cases with a single decision.
+ * Returns succeeded / failed case IDs.
+ * Invalidates case list, dashboard, and leader inbox on completion.
+ */
+export function useBatchFinalize() {
+  const queryClient = useQueryClient();
+
+  return useMutation<BatchFinalizeResponse, Error, BatchFinalizeRequest>({
+    mutationFn: (body) =>
+      apiClient.post<BatchFinalizeResponse>("/api/cases/batch-finalize", body),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: caseKeys.all });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["leader-inbox"] });
     },
   });
 }

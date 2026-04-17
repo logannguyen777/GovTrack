@@ -19,39 +19,17 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from ...database import async_gremlin_submit
 from ..base import AgentResult, BaseAgent
 from ..orchestrator import register_agent
+from ..pii_filters import PIILeakDetected, enforce_no_pii, has_pii
+from ..pii_filters import redact as _redact_pii
+from ..streaming import StreamingAgentEvent
 
 logger = logging.getLogger("govflow.agent.summarizer")
-
-# ── PII patterns for Vietnamese identity documents ──────────────────
-_CCCD_PATTERN = re.compile(r"\b\d{9,12}\b")
-_PHONE_PATTERN = re.compile(r"\b0\d{9,10}\b")
-_LABELED_ID_PATTERN = re.compile(
-    r"(?:CCCD|CMND|CMT|[Ss]o [Dd]inh [Dd]anh|[Ss]o [Cc]an [Cc]uoc)\s*:?\s*\d{9,12}"
-)
-_LABELED_PHONE_PATTERN = re.compile(
-    r"(?:SDT|[Ss]o [Dd]ien [Tt]hoai|[Dd]ien thoai|DT)\s*:?\s*0\d{9,10}"
-)
-_ADDRESS_PATTERN = re.compile(
-    r"(?:\d{1,4}[\/\-]\d{1,4}\s+)?"
-    r"(?:duong|pho|ngo|hem|so nha"
-    r"|đường|phố|ngõ|hẻm|số nhà)"
-    r"\s+[\w\s,]{3,50}",
-    re.IGNORECASE,
-)
-
-_ALL_PII_PATTERNS = [
-    _LABELED_ID_PATTERN,
-    _LABELED_PHONE_PATTERN,
-    _ADDRESS_PATTERN,
-    _CCCD_PATTERN,
-    _PHONE_PATTERN,
-]
 
 
 class SummarizerAgent(BaseAgent):
@@ -62,8 +40,144 @@ class SummarizerAgent(BaseAgent):
 
     # ── ABC stub ────────────────────────────────────────────────
     async def build_messages(self, case_id: str) -> list[dict[str, Any]]:
-        """Required by ABC. Not used since run() is overridden."""
-        return [{"role": "system", "content": self.profile.system_prompt}]
+        """
+        Xây dựng messages cho summarizer.
+
+        Lấy case_summary, danh sách tài liệu, gaps, và target role/length
+        từ Context Graph rồi nhúng vào user message.  Nếu gọi qua base-class
+        run() (không override), agent sẽ tạo tóm tắt role-aware cho mode mặc
+        định "staff".  Trong thực tế run() được override; hàm này đảm bảo
+        ABC contract được thỏa mãn và có thể dùng trong unit test.
+        """
+        # Lấy thông tin case từ graph
+        case_result = await self._get_gdb().execute(
+            "g.V().has('Case', 'case_id', cid).valueMap(true)",
+            {"cid": case_id},
+        )
+        case_vertex = case_result[0] if case_result else {}
+
+        # Lấy gaps
+        gaps = await self._get_gdb().execute(
+            "g.V().has('Case', 'case_id', cid).out('HAS_GAP').valueMap(true)",
+            {"cid": case_id},
+        )
+
+        # Lấy tài liệu
+        documents = await self._get_gdb().execute(
+            "g.V().has('Case', 'case_id', cid)"
+            ".out('HAS_BUNDLE').out('CONTAINS').hasLabel('Document')"
+            ".valueMap('filename', 'doc_type').limit(20)",
+            {"cid": case_id},
+        )
+
+        # Lấy TTHC name
+        tthc_match = await self._get_gdb().execute(
+            "g.V().has('Case', 'case_id', cid).out('MATCHES_TTHC').valueMap(true)",
+            {"cid": case_id},
+        )
+        tthc_name = self._extract_prop(tthc_match[0], "name") if tthc_match else ""
+
+        # Role mặc định khi gọi qua base run()
+        role = "staff"
+        length = "tối đa 10 dòng"
+
+        case_summary = {
+            "tthc_name": tthc_name,
+            "status": self._extract_prop(case_vertex, "status"),
+            "urgency": self._extract_prop(case_vertex, "urgency"),
+            "compliance_score": self._extract_prop(case_vertex, "compliance_score"),
+            "sla_deadline": self._extract_prop(case_vertex, "sla_deadline"),
+        }
+
+        gaps_found = [
+            {
+                "mo_ta": self._extract_prop(g, "description"),
+                "muc_do": self._extract_prop(g, "severity"),
+                "huong_xu_ly": self._extract_prop(g, "fix_suggestion"),
+            }
+            for g in gaps
+        ]
+
+        documents_list = [
+            {
+                "ten_file": self._extract_prop(d, "filename"),
+                "loai_tai_lieu": self._extract_prop(d, "doc_type"),
+            }
+            for d in documents
+        ]
+
+        system_prompt = (
+            "Bạn là chuyên viên tóm tắt hồ sơ hành chính. "
+            f"Tạo tóm tắt role-aware cho {role} với độ dài {length}. "
+            "Giữ diacritics Vietnamese, định dạng markdown.\n\n"
+            + self.profile.system_prompt
+        )
+
+        user_content = json.dumps(
+            {
+                "case_id": case_id,
+                "case_summary": case_summary,
+                "documents_list": documents_list,
+                "gaps_found": gaps_found,
+                "target_role": role,
+                "target_length": length,
+                "instruction": (
+                    "Viết tóm tắt theo role đã chỉ định. "
+                    "Trả về JSON: {\"summary_text\": \"...\", "
+                    "\"mode\": \"staff\", \"word_count\": XX}."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+    # ── Streaming entry point ─────────────────────────────────────
+    async def run_streaming(self, case_id: str) -> AsyncIterator[StreamingAgentEvent]:  # type: ignore[override]
+        """
+        Override: run the summarizer pipeline and stream text/thinking events.
+
+        3 summaries are generated in parallel via asyncio.gather.  Each
+        `_stream_qwen` call fires `on_thinking` / `on_text` callbacks that
+        emit StreamingAgentEvent objects; the generator yields those via
+        an asyncio.Queue fed by the callbacks.
+        """
+        # Use a queue to bridge callbacks → async generator
+        queue: asyncio.Queue[StreamingAgentEvent | None] = asyncio.Queue()
+
+        async def _put(evt: StreamingAgentEvent) -> None:
+            await queue.put(evt)
+
+        async def _run_and_signal() -> AgentResult:
+            result = await self._run_with_streaming_callbacks(case_id, _put)
+            await queue.put(None)  # sentinel
+            return result
+
+        task = asyncio.create_task(_run_and_signal())
+
+        # Yield events as they arrive until sentinel
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item
+
+        result = await task
+        if result.status == "completed":
+            yield StreamingAgentEvent(
+                type="completed",
+                agent_name=self.profile.name,
+                result=result.output,
+            )
+        else:
+            yield StreamingAgentEvent(
+                type="failed",
+                agent_name=self.profile.name,
+                error=result.error,
+            )
 
     # ── Main entry point ────────────────────────────────────────
     async def run(self, case_id: str) -> AgentResult:
@@ -91,38 +205,38 @@ class SummarizerAgent(BaseAgent):
                 entities,
                 existing_summaries_raw,
             ) = await asyncio.gather(
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid).valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_GAP').valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_GAP').out('CITES').valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_OPINION').valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_DECISION').valueMap(true)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_BUNDLE').out('CONTAINS').hasLabel('Document')"
                     ".out('EXTRACTED').hasLabel('ExtractedEntity')"
                     ".valueMap('field_name', 'value').limit(20)",
                     {"cid": case_id},
                 ),
-                async_gremlin_submit(
+                self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".out('HAS_SUMMARY').values('mode')",
                     {"cid": case_id},
@@ -174,7 +288,7 @@ class SummarizerAgent(BaseAgent):
 
             # ── Step 3: Build combined case_data dict ───────────
             # Get TTHC name via MATCHES_TTHC
-            tthc_match = await async_gremlin_submit(
+            tthc_match = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid)"
                 ".out('MATCHES_TTHC').valueMap(true)",
                 {"cid": case_id},
@@ -271,6 +385,240 @@ class SummarizerAgent(BaseAgent):
                 error=str(e),
             )
 
+    # ── Streaming-enabled pipeline ──────────────────────────────
+
+    async def _run_with_streaming_callbacks(
+        self,
+        case_id: str,
+        emit: Callable[[StreamingAgentEvent], Awaitable[None]],
+    ) -> AgentResult:
+        """
+        Same logic as run() but 3 LLM calls use _stream_qwen so text/thinking
+        events are forwarded via `emit`.  Called by run_streaming().
+        """
+
+        start_time = time.monotonic()
+        step_id = str(uuid.uuid4())
+
+        try:
+            (
+                case_result, gaps, citations, opinions,
+                decision_result, entities, existing_summaries_raw,
+            ) = await asyncio.gather(
+                self._get_gdb().execute(
+                    "g.V().has('Case', 'case_id', cid).valueMap(true)", {"cid": case_id},
+                ),
+                self._get_gdb().execute(
+                    "g.V().has('Case', 'case_id', cid).out('HAS_GAP').valueMap(true)",
+                    {"cid": case_id},
+                ),
+                self._get_gdb().execute(
+                    "g.V().has('Case', 'case_id', cid)"
+                    ".out('HAS_GAP').out('CITES').valueMap(true)", {"cid": case_id},
+                ),
+                self._get_gdb().execute(
+                    "g.V().has('Case', 'case_id', cid).out('HAS_OPINION').valueMap(true)",
+                    {"cid": case_id},
+                ),
+                self._get_gdb().execute(
+                    "g.V().has('Case', 'case_id', cid).out('HAS_DECISION').valueMap(true)",
+                    {"cid": case_id},
+                ),
+                self._get_gdb().execute(
+                    "g.V().has('Case', 'case_id', cid)"
+                    ".out('HAS_BUNDLE').out('CONTAINS').hasLabel('Document')"
+                    ".out('EXTRACTED').hasLabel('ExtractedEntity')"
+                    ".valueMap('field_name', 'value').limit(20)", {"cid": case_id},
+                ),
+                self._get_gdb().execute(
+                    "g.V().has('Case', 'case_id', cid).out('HAS_SUMMARY').values('mode')",
+                    {"cid": case_id},
+                ),
+            )
+
+            if not case_result:
+                raise ValueError(f"Case {case_id} not found in graph")
+
+            case_vertex = case_result[0]
+            existing_modes = set(existing_summaries_raw) if existing_summaries_raw else set()
+            modes_to_generate = [m for m in self.MODES if m not in existing_modes]
+
+            if not modes_to_generate:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                usage = self.client.reset_usage()
+                await self._log_step(
+                    step_id=step_id, case_id=case_id,
+                    action="pipeline_summarizer",
+                    usage=usage, duration_ms=duration_ms, status="completed",
+                )
+                return AgentResult(
+                    agent_name=self.profile.name, case_id=case_id,
+                    status="completed",
+                    output=json.dumps({
+                        "summaries_generated": 0, "reason": "all_exist",
+                        "existing_modes": list(existing_modes),
+                    }),
+                    usage=usage, duration_ms=duration_ms,
+                )
+
+            tthc_match = await self._get_gdb().execute(
+                "g.V().has('Case', 'case_id', cid).out('MATCHES_TTHC').valueMap(true)",
+                {"cid": case_id},
+            )
+            tthc_name = self._extract_prop(tthc_match[0], "name") if tthc_match else ""
+            case_data = self._build_case_data(
+                case_vertex, gaps, citations, opinions,
+                decision_result, entities, tthc_name,
+            )
+
+            # Generate 3 summaries in parallel with streaming callbacks
+            async def _gen_streaming(mode: str) -> dict[str, Any] | None:
+                try:
+                    return await self._generate_one_summary_streaming(
+                        case_id, case_data, mode, emit,
+                    )
+                except Exception as exc:
+                    logger.error(f"[Summarizer] Streaming {mode} summary failed: {exc}", exc_info=True)
+                    return None
+
+            results = await asyncio.gather(*[_gen_streaming(m) for m in modes_to_generate])
+            summaries = [r for r in results if r is not None]
+
+            duration_ms = (time.monotonic() - start_time) * 1000
+            usage = self.client.reset_usage()
+            await self._log_step(
+                step_id=step_id, case_id=case_id,
+                action="pipeline_summarizer",
+                usage=usage, duration_ms=duration_ms, status="completed",
+            )
+
+            output_data = {
+                "summaries_generated": len(summaries),
+                "summaries": summaries,
+                "skipped_modes": list(existing_modes),
+                "word_counts": {s["mode"]: s["word_count"] for s in summaries},
+            }
+            return AgentResult(
+                agent_name=self.profile.name, case_id=case_id,
+                status="completed",
+                output=json.dumps(output_data, ensure_ascii=False),
+                tool_calls_count=0, usage=usage, duration_ms=duration_ms,
+            )
+
+        except Exception as exc:
+            duration_ms = (time.monotonic() - start_time) * 1000
+            await self._log_step(
+                step_id=step_id, case_id=case_id,
+                action="pipeline_summarizer",
+                usage=self.client.reset_usage(),
+                duration_ms=duration_ms, status="failed", error=str(exc),
+            )
+            return AgentResult(
+                agent_name=self.profile.name, case_id=case_id,
+                status="failed", output="",
+                duration_ms=duration_ms, error=str(exc),
+            )
+
+    async def _generate_one_summary_streaming(
+        self,
+        case_id: str,
+        case_data: dict,
+        mode: str,
+        emit: Callable[[StreamingAgentEvent], Awaitable[None]],
+    ) -> dict[str, Any]:
+        """
+        Like _generate_one_summary but uses _stream_qwen so text/thinking
+        tokens are forwarded via `emit` with `variant=mode`.
+        """
+        context_for_llm = self._build_mode_context(case_data, mode)
+        messages = [
+            {"role": "system", "content": self.profile.system_prompt},
+            {
+                "role": "user",
+                "content": json.dumps({
+                    "case_context": context_for_llm,
+                    "mode": mode,
+                    "instruction": self._mode_instruction(mode),
+                }, ensure_ascii=False),
+            },
+        ]
+
+        text_parts: list[str] = []
+
+        async def _on_thinking(chunk: str) -> None:
+            await emit(StreamingAgentEvent(
+                type="thinking_chunk",
+                agent_name=self.profile.name,
+                delta=chunk,
+                variant=mode,
+            ))
+
+        async def _on_text(chunk: str) -> None:
+            text_parts.append(chunk)
+            await emit(StreamingAgentEvent(
+                type="text_chunk",
+                agent_name=self.profile.name,
+                delta=chunk,
+                variant=mode,
+            ))
+
+        response = await self._stream_qwen(
+            model=self.profile.model,
+            messages=messages,
+            on_thinking=_on_thinking,
+            on_text=_on_text,
+        )
+
+        full_text = response["content"] or "".join(text_parts)
+
+        # Try to parse as JSON (Qwen may have produced JSON in the stream)
+        summary_data: dict = {}
+        try:
+            cleaned = re.sub(r"^```(?:json)?\s*\n?", "", full_text.strip())
+            cleaned = re.sub(r"\n?```\s*$", "", cleaned).strip()
+            summary_data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            summary_data = {"summary_text": full_text}
+
+        summary_text = summary_data.get("summary_text", full_text)
+        if not summary_text:
+            summary_text = self._fallback_summary(case_data, mode)
+
+        if mode == "citizen":
+            summary_text = _strip_pii(summary_text)
+            if _has_pii(summary_text):
+                logger.warning("[Summarizer] PII in citizen summary, regenerating")
+                summary_text = await self._regenerate_without_pii(summary_text)
+            # Post-generation hard check — reject if still leaking
+            try:
+                summary_text = enforce_no_pii(summary_text, context=f"SummarizerAgent:{mode}")
+            except PIILeakDetected:
+                logger.error("[Summarizer] PII leak in citizen summary after regeneration — rejecting")
+                raise
+
+        word_count = len(summary_text.split())
+        clearance = 0 if mode == "citizen" else 1
+        summary_id = f"sum-{case_id}-{mode}-{uuid.uuid4().hex[:8]}"
+        now = datetime.now(UTC).isoformat()
+
+        await self._get_gdb().execute(
+            "g.addV('Summary')"
+            ".property('summary_id', sid).property('text', text)"
+            ".property('mode', mode).property('word_count', wc)"
+            ".property('case_id', cid).property('clearance', cl)"
+            ".property('created_at', ts).as('sum')"
+            ".V().has('Case', 'case_id', cid).addE('HAS_SUMMARY').to('sum')",
+            {
+                "sid": summary_id, "text": summary_text, "mode": mode,
+                "wc": word_count, "cid": case_id, "cl": clearance, "ts": now,
+            },
+        )
+
+        return {
+            "summary_id": summary_id, "mode": mode,
+            "text": summary_text, "word_count": word_count, "clearance": clearance,
+        }
+
     # ── Summary generation per mode ─────────────────────────────
 
     async def _generate_one_summary(
@@ -316,6 +664,17 @@ class SummarizerAgent(BaseAgent):
                     f"regenerating for case {case_id}"
                 )
                 summary_text = await self._regenerate_without_pii(summary_text)
+            # Hard post-check — reject if still leaking after regeneration
+            try:
+                summary_text = enforce_no_pii(
+                    summary_text, context=f"SummarizerAgent:non-stream:{mode}"
+                )
+            except PIILeakDetected:
+                logger.error(
+                    f"[Summarizer] PII leak in citizen summary after regeneration "
+                    f"for case {case_id} — rejecting"
+                )
+                raise
 
         word_count = len(summary_text.split())
 
@@ -326,7 +685,7 @@ class SummarizerAgent(BaseAgent):
         summary_id = f"sum-{case_id}-{mode}-{uuid.uuid4().hex[:8]}"
         now = datetime.now(UTC).isoformat()
 
-        await async_gremlin_submit(
+        await self._get_gdb().execute(
             "g.addV('Summary')"
             ".property('summary_id', sid)"
             ".property('text', text)"
@@ -623,24 +982,17 @@ class SummarizerAgent(BaseAgent):
         return bool(val)
 
 
-# ── Module-level PII utility functions ──────────────────────────
+# ── Module-level PII utility functions (delegate to shared module) ──
 
 
 def _strip_pii(text: str) -> str:
     """Strip Vietnamese PII patterns from text."""
-    if not text:
-        return text
-    for pattern in _ALL_PII_PATTERNS:
-        text = pattern.sub("[***]", text)
-    return text
+    return _redact_pii(text)
 
 
 def _has_pii(text: str) -> bool:
     """Check if text still contains PII patterns."""
-    for pattern in _ALL_PII_PATTERNS:
-        if pattern.search(text):
-            return True
-    return False
+    return has_pii(text)
 
 
 # Register with orchestrator

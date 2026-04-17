@@ -12,10 +12,17 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
-from ..database import async_gremlin_submit, oss_get_signed_url, oss_put_object, pg_connection
+from ..auth import SYSTEM_SESSION
+from ..database import oss_get_signed_url, oss_put_object, pg_connection
+from ..graph.permitted_client import PermittedGremlinClient
 from ..graph.sdk_guard import SDKGuard, SDKGuardViolation
 from ..graph.templates import TEMPLATES, GremlinTemplate
 from .profile import AgentProfile
+
+
+async def _system_gdb_execute(query: str, bindings: dict | None = None) -> list:
+    """Execute a Gremlin query using the SYSTEM_SESSION (MCP tool context)."""
+    return await PermittedGremlinClient(SYSTEM_SESSION).execute(query, bindings or {})
 
 logger = logging.getLogger("govflow.mcp")
 
@@ -288,7 +295,7 @@ def _make_gremlin_executor(tmpl: GremlinTemplate):
             if parsed.is_mutating:
                 guard.check_write(parsed)  # Raises SDKGuardViolation if denied
 
-        return await async_gremlin_submit(tmpl.query, bindings)
+        return await _system_gdb_execute(tmpl.query, bindings)
     return executor
 
 
@@ -359,7 +366,7 @@ async def _execute_audit_log(arguments: dict) -> dict:
     now = datetime.now(UTC).isoformat()
 
     # GDB AuditEvent
-    await async_gremlin_submit(
+    await _system_gdb_execute(
         "g.addV('AuditEvent')"
         ".property('event_type', et).property('actor_id', actor)"
         ".property('target_type', tt).property('target_id', tid)"

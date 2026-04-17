@@ -27,7 +27,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from ...database import async_gremlin_submit
+# async_gremlin_submit replaced by self._get_gdb().execute() per task 1.1
 from ..base import AgentResult, BaseAgent
 from ..orchestrator import register_agent
 
@@ -62,7 +62,7 @@ class RouterAgent(BaseAgent):
 
         try:
             # ── Step 1: Verify MATCHES_TTHC edge exists ──────────────
-            tthc_match = await async_gremlin_submit(
+            tthc_match = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid)"
                 ".out('MATCHES_TTHC').valueMap(true)",
                 {"cid": case_id},
@@ -79,7 +79,7 @@ class RouterAgent(BaseAgent):
             logger.info(f"[Router] Case {case_id} matched TTHC: {tthc_code} ({tthc_name})")
 
             # ── Step 2: Fetch case metadata ──────────────────────────
-            case_data = await async_gremlin_submit(
+            case_data = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid).valueMap(true)",
                 {"cid": case_id},
             )
@@ -91,7 +91,7 @@ class RouterAgent(BaseAgent):
             location = self._extract_prop(case_meta, "location") or region
 
             # ── Step 3: Rule engine — find authorized organizations ──
-            authorized_orgs = await async_gremlin_submit(
+            authorized_orgs = await self._get_gdb().execute(
                 "g.V().has('TTHCSpec', 'code', code)"
                 ".out('AUTHORIZED_FOR').hasLabel('Organization')"
                 ".valueMap(true)",
@@ -159,7 +159,7 @@ class RouterAgent(BaseAgent):
             if assigned_dept and confidence >= self.CONFIDENCE_THRESHOLD:
                 dept_id = assigned_dept["id"]
                 try:
-                    positions = await async_gremlin_submit(
+                    positions = await self._get_gdb().execute(
                         "g.V().has('Organization', 'org_id', oid)"
                         ".in('BELONGS_TO').hasLabel('Position')"
                         ".order().by("
@@ -185,28 +185,118 @@ class RouterAgent(BaseAgent):
                     logger.warning(f"[Router] Workload check failed: {e}")
 
             # ── Step 6: Write ASSIGNED_TO edge or flag for review ────
+            # Idempotency: check for existing assignment before creating new edge.
             if assigned_dept and confidence >= self.CONFIDENCE_THRESHOLD:
                 now = datetime.now(UTC).isoformat()
-                await async_gremlin_submit(
+
+                # Query existing ASSIGNED_TO edge (if any)
+                existing_assignment = await self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
-                    ".addE('ASSIGNED_TO')"
-                    ".to(g.V().has('Organization', 'org_id', oid))"
-                    ".property('assigned_at', ts)"
-                    ".property('assigned_by', agent)",
-                    {
-                        "cid": case_id,
-                        "oid": assigned_dept["id"],
-                        "ts": now,
-                        "agent": "agent:Router",
-                    },
+                    ".outE('ASSIGNED_TO').as('e')"
+                    ".inV().as('org')"
+                    ".select('e', 'org')"
+                    ".by(valueMap(true))"
+                    ".by(valueMap(true))",
+                    {"cid": case_id},
                 )
-                logger.info(
-                    f"[Router] ASSIGNED_TO edge written: "
-                    f"Case {case_id} -> {assigned_dept['name']}"
-                )
+
+                if existing_assignment:
+                    # Extract existing confidence from edge properties
+                    existing_edge = existing_assignment[0]
+                    edge_props = existing_edge.get("e", {})
+                    existing_conf_raw = edge_props.get("confidence", [0.0])
+                    existing_conf = float(
+                        existing_conf_raw[0]
+                        if isinstance(existing_conf_raw, list)
+                        else existing_conf_raw
+                    )
+
+                    if confidence >= existing_conf + 0.1:
+                        # New confidence is significantly higher → reassign
+                        # Wrap drop + add + audit in logical transaction
+                        _gdb_tx = self._get_gdb()
+                        async with _gdb_tx.transaction() as tx:
+                            await tx.submit(
+                                "g.V().has('Case', 'case_id', cid)"
+                                ".outE('ASSIGNED_TO').drop()",
+                                {"cid": case_id},
+                            )
+                            await tx.submit(
+                                "g.V().has('Case', 'case_id', cid)"
+                                ".addE('ASSIGNED_TO')"
+                                ".to(__.V().has('Organization', 'org_id', oid))"
+                                ".property('assigned_at', ts)"
+                                ".property('assigned_by', agent)"
+                                ".property('confidence', conf)",
+                                {
+                                    "cid": case_id,
+                                    "oid": assigned_dept["id"],
+                                    "ts": now,
+                                    "agent": "agent:Router",
+                                    "conf": confidence,
+                                },
+                            )
+                            await tx.submit(
+                                "g.V().has('Case', 'case_id', cid)"
+                                ".property('routing_audit', audit)",
+                                {"cid": case_id, "audit": f"router_reassigned:{now}"},
+                            )
+                        logger.info(
+                            f"[Router] ASSIGNED_TO REASSIGNED: "
+                            f"Case {case_id} -> {assigned_dept['name']} "
+                            f"(new conf={confidence:.2f} > existing={existing_conf:.2f})"
+                        )
+                    else:
+                        # Existing assignment is still preferred → keep it
+                        existing_org_props = existing_assignment[0].get("org", {})
+                        existing_name = self._extract_prop(existing_org_props, "name")
+                        await self._get_gdb().execute(
+                            "g.V().has('Case', 'case_id', cid)"
+                            ".property('routing_audit', audit)",
+                            {"cid": case_id, "audit": f"router_kept_existing:{now}"},
+                        )
+                        logger.info(
+                            f"[Router] Kept existing assignment: "
+                            f"Case {case_id} -> {existing_name} "
+                            f"(existing conf={existing_conf:.2f} >= new={confidence:.2f})"
+                        )
+                        # Return the cached result — update assigned_dept for output
+                        assigned_dept = {
+                            "id": self._extract_prop(existing_org_props, "org_id"),
+                            "name": existing_name,
+                            "level": self._extract_prop(existing_org_props, "level"),
+                        }
+                else:
+                    # No existing assignment — write fresh edge + department update
+                    _gdb_tx2 = self._get_gdb()
+                    async with _gdb_tx2.transaction() as tx:
+                        await tx.submit(
+                            "g.V().has('Case', 'case_id', cid)"
+                            ".addE('ASSIGNED_TO')"
+                            ".to(__.V().has('Organization', 'org_id', oid))"
+                            ".property('assigned_at', ts)"
+                            ".property('assigned_by', agent)"
+                            ".property('confidence', conf)",
+                            {
+                                "cid": case_id,
+                                "oid": assigned_dept["id"],
+                                "ts": now,
+                                "agent": "agent:Router",
+                                "conf": confidence,
+                            },
+                        )
+                        await tx.submit(
+                            "g.V().has('Case', 'case_id', cid)"
+                            ".property('department', dept_id)",
+                            {"cid": case_id, "dept_id": assigned_dept["id"]},
+                        )
+                    logger.info(
+                        f"[Router] ASSIGNED_TO edge written: "
+                        f"Case {case_id} -> {assigned_dept['name']}"
+                    )
             else:
                 needs_human_review = True
-                await async_gremlin_submit(
+                await self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".property('routing_status', status)",
                     {"cid": case_id, "status": "needs_human_review"},
@@ -224,10 +314,10 @@ class RouterAgent(BaseAgent):
             # ── Step 8: Write CONSULTED edges ────────────────────────
             for target in consult_targets:
                 try:
-                    await async_gremlin_submit(
+                    await self._get_gdb().execute(
                         "g.V().has('Case', 'case_id', cid)"
                         ".addE('CONSULTED')"
-                        ".to(g.V().has('Organization', 'org_id', oid))"
+                        ".to(__.V().has('Organization', 'org_id', oid))"
                         ".property('reason', reason)"
                         ".property('suggested_by', agent)",
                         {
@@ -436,7 +526,7 @@ class RouterAgent(BaseAgent):
 
         # Rule 1: Legal complexity — check gap count
         try:
-            gap_result = await async_gremlin_submit(
+            gap_result = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid).out('HAS_GAP').count()",
                 {"cid": case_id},
             )

@@ -11,6 +11,7 @@ Pipeline:
   5. Write MATCHES_TTHC edge if confident, update Case.urgency
   6. Escalate unknown TTHC for manual classification
 """
+
 from __future__ import annotations
 
 import json
@@ -20,7 +21,7 @@ import time
 import uuid
 from typing import Any
 
-from ...database import async_gremlin_submit
+# async_gremlin_submit replaced by self._get_gdb().execute() per task 1.1
 from ..base import AgentResult, BaseAgent
 from ..orchestrator import register_agent
 
@@ -50,21 +51,24 @@ class ClassifierAgent(BaseAgent):
         step_id = str(uuid.uuid4())
 
         logger.info(f"[Classifier] Starting on case {case_id}")
-        await self._broadcast(case_id, "agent_started", {
-            "agent_name": self.profile.name,
-            "step_id": step_id,
-        })
+        await self._broadcast(
+            case_id,
+            "agent_started",
+            {
+                "agent_name": self.profile.name,
+                "step_id": step_id,
+            },
+        )
+
+        # Branch: internal_dispatch uses subject-tag detection, not TTHC matching
+        is_dispatch = getattr(self, "_case_type", "citizen_tthc") == "internal_dispatch"
 
         try:
-            # Step 1: Fetch case metadata
-            case_data = await async_gremlin_submit(
-                "g.V().has('Case', 'case_id', cid).valueMap(true)",
-                {"cid": case_id},
-            )
-            case_meta = case_data[0] if case_data else {}
+            if is_dispatch:
+                return await self._run_dispatch_mode(case_id, start_time, step_id)
 
-            # Step 2: Fetch documents with types from DocAnalyzer
-            documents = await async_gremlin_submit(
+            # Step 1: Fetch documents with types from DocAnalyzer
+            documents = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid)"
                 ".out('HAS_BUNDLE').out('CONTAINS').hasLabel('Document')"
                 ".valueMap(true)",
@@ -82,7 +86,7 @@ class ClassifierAgent(BaseAgent):
                 confidence = float(confidence)
 
                 # Get entities extracted by DocAnalyzer
-                entities = await async_gremlin_submit(
+                entities = await self._get_gdb().execute(
                     "g.V().has('Document', 'doc_id', did)"
                     ".out('EXTRACTED').hasLabel('ExtractedEntity')"
                     ".valueMap('field_name', 'value')",
@@ -91,20 +95,30 @@ class ClassifierAgent(BaseAgent):
 
                 entity_list = []
                 for e in entities:
-                    fname = e.get("field_name", [""])[0] if isinstance(e.get("field_name"), list) else e.get("field_name", "")
-                    val = e.get("value", [""])[0] if isinstance(e.get("value"), list) else e.get("value", "")
+                    fname = (
+                        e.get("field_name", [""])[0]
+                        if isinstance(e.get("field_name"), list)
+                        else e.get("field_name", "")
+                    )
+                    val = (
+                        e.get("value", [""])[0]
+                        if isinstance(e.get("value"), list)
+                        else e.get("value", "")
+                    )
                     if fname:
                         entity_list.append({"field_name": fname, "value": val})
 
-                doc_summaries.append({
-                    "doc_id": doc_id,
-                    "type": doc_type,
-                    "confidence": confidence,
-                    "entities": entity_list,
-                })
+                doc_summaries.append(
+                    {
+                        "doc_id": doc_id,
+                        "type": doc_type,
+                        "confidence": confidence,
+                        "entities": entity_list,
+                    }
+                )
 
             # Step 4: Fetch TTHC catalog from KG for grounding
-            tthc_catalog = await async_gremlin_submit(
+            tthc_catalog = await self._get_gdb().execute(
                 "g.V().hasLabel('TTHCSpec').valueMap(true)",
                 {},
             )
@@ -123,7 +137,9 @@ class ClassifierAgent(BaseAgent):
 
             # Step 6: Call Qwen3-Max for classification
             classification = await self._classify(
-                case_id, bundle_description, tthc_list,
+                case_id,
+                bundle_description,
+                tthc_list,
             )
 
             # Step 7: Grounding check
@@ -143,10 +159,10 @@ class ClassifierAgent(BaseAgent):
 
             # Step 8: Write MATCHES_TTHC edge if confident match
             if not unknown_tthc and confidence_val >= self.CONFIDENCE_THRESHOLD:
-                await async_gremlin_submit(
+                await self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".addE('MATCHES_TTHC')"
-                    ".to(g.V().has('TTHCSpec', 'code', code))"
+                    ".to(__.V().has('TTHCSpec', 'code', code))"
                     ".property('confidence', conf)",
                     {
                         "cid": case_id,
@@ -164,14 +180,14 @@ class ClassifierAgent(BaseAgent):
             if urgency not in self.VALID_URGENCY_LEVELS:
                 urgency = "normal"
 
-            await async_gremlin_submit(
+            await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid).property('urgency', urg)",
                 {"cid": case_id, "urg": urgency},
             )
 
             # Step 10: Handle unknown TTHC -- escalate
             if unknown_tthc:
-                await async_gremlin_submit(
+                await self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".property('status', 'needs_manual_classification')",
                     {"cid": case_id},
@@ -194,24 +210,31 @@ class ClassifierAgent(BaseAgent):
                 status="completed",
             )
 
-            output_summary = json.dumps({
-                "tthc_code": tthc_code if not unknown_tthc else None,
-                "tthc_name": classification.get("tthc_name", ""),
-                "confidence": confidence_val,
-                "urgency": urgency,
-                "unknown_tthc": unknown_tthc,
-                "reasoning": classification.get("reasoning", ""),
-                "documents_analyzed": len(doc_summaries),
-            }, ensure_ascii=False)
+            output_summary = json.dumps(
+                {
+                    "tthc_code": tthc_code if not unknown_tthc else None,
+                    "tthc_name": classification.get("tthc_name", ""),
+                    "confidence": confidence_val,
+                    "urgency": urgency,
+                    "unknown_tthc": unknown_tthc,
+                    "reasoning": classification.get("reasoning", ""),
+                    "documents_analyzed": len(doc_summaries),
+                },
+                ensure_ascii=False,
+            )
 
-            await self._broadcast(case_id, "agent_completed", {
-                "agent_name": self.profile.name,
-                "step_id": step_id,
-                "tthc_code": tthc_code if not unknown_tthc else None,
-                "confidence": confidence_val,
-                "urgency": urgency,
-                "duration_ms": round(duration_ms),
-            })
+            await self._broadcast(
+                case_id,
+                "agent_completed",
+                {
+                    "agent_name": self.profile.name,
+                    "step_id": step_id,
+                    "tthc_code": tthc_code if not unknown_tthc else None,
+                    "confidence": confidence_val,
+                    "urgency": urgency,
+                    "duration_ms": round(duration_ms),
+                },
+            )
 
             return AgentResult(
                 agent_name=self.profile.name,
@@ -237,10 +260,14 @@ class ClassifierAgent(BaseAgent):
                 error=str(e),
             )
 
-            await self._broadcast(case_id, "agent_failed", {
-                "agent_name": self.profile.name,
-                "error": str(e),
-            })
+            await self._broadcast(
+                case_id,
+                "agent_failed",
+                {
+                    "agent_name": self.profile.name,
+                    "error": str(e),
+                },
+            )
 
             return AgentResult(
                 agent_name=self.profile.name,
@@ -265,10 +292,7 @@ class ClassifierAgent(BaseAgent):
             desc = f"- {doc['type']} (confidence: {doc['confidence']:.2f})"
             entities = doc.get("entities", [])
             if entities:
-                key_vals = [
-                    f"{e['field_name']}={e['value']}"
-                    for e in entities[:5]
-                ]
+                key_vals = [f"{e['field_name']}={e['value']}" for e in entities[:5]]
                 desc += f" [{', '.join(key_vals)}]"
             parts.append(desc)
         return "\n".join(parts)
@@ -287,11 +311,14 @@ class ClassifierAgent(BaseAgent):
             {"role": "system", "content": self.profile.system_prompt},
             {
                 "role": "user",
-                "content": json.dumps({
-                    "case_id": case_id,
-                    "bundle_description": bundle_description,
-                    "available_tthc_codes": tthc_list,
-                }, ensure_ascii=False),
+                "content": json.dumps(
+                    {
+                        "case_id": case_id,
+                        "bundle_description": bundle_description,
+                        "available_tthc_codes": tthc_list,
+                    },
+                    ensure_ascii=False,
+                ),
             },
         ]
 
@@ -318,20 +345,20 @@ class ClassifierAgent(BaseAgent):
                         "[Classifier] Invalid JSON from Qwen, retrying with stricter prompt"
                     )
                     messages.append({"role": "assistant", "content": content})
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "Output KHONG hop le JSON. Hay tra lai DUNG FORMAT JSON. "
-                            "Khong markdown, khong comment. Chi JSON thuan tuy: "
-                            '{"tthc_code": "...", "tthc_name": "...", "confidence": 0.XX, '
-                            '"urgency": "normal|high|critical", "unknown_tthc": false, '
-                            '"reasoning": "..."}'
-                        ),
-                    })
-                else:
-                    logger.error(
-                        f"[Classifier] JSON parse failed after retry: {content[:200]}"
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Output KHONG hop le JSON. Hay tra lai DUNG FORMAT JSON. "
+                                "Khong markdown, khong comment. Chi JSON thuan tuy: "
+                                '{"tthc_code": "...", "tthc_name": "...", "confidence": 0.XX, '
+                                '"urgency": "normal|high|critical", "unknown_tthc": false, '
+                                '"reasoning": "..."}'
+                            ),
+                        }
                     )
+                else:
+                    logger.error(f"[Classifier] JSON parse failed after retry: {content[:200]}")
                     return {
                         "tthc_code": "",
                         "tthc_name": "",
@@ -351,6 +378,143 @@ class ClassifierAgent(BaseAgent):
         if isinstance(val, list):
             return val[0] if val else ""
         return str(val) if val else ""
+
+    async def _run_dispatch_mode(
+        self, case_id: str, start_time: float, step_id: str
+    ) -> AgentResult:
+        """
+        Dispatch variant: detect subject tags and urgency instead of TTHC code.
+        Called when case_type == internal_dispatch.
+        """
+        logger.info(f"[Classifier] Dispatch mode on case {case_id}")
+
+        documents = await self._get_gdb().execute(
+            "g.V().has('Case', 'case_id', cid)"
+            ".out('HAS_BUNDLE').out('CONTAINS').hasLabel('Document').valueMap(true)",
+            {"cid": case_id},
+        )
+        doc_summaries: list[dict[str, Any]] = []
+        for doc in documents:
+            doc_id = self._extract_prop(doc, "doc_id")
+            entities = await self._get_gdb().execute(
+                "g.V().has('Document', 'doc_id', did)"
+                ".out('EXTRACTED').hasLabel('ExtractedEntity').valueMap('field_name', 'value')",
+                {"did": doc_id},
+            )
+            entity_list = []
+            for e in entities:
+                fn = e.get("field_name", [""])
+                fname = fn[0] if isinstance(fn, list) else fn
+                vv = e.get("value", [""])
+                val = vv[0] if isinstance(vv, list) else vv
+                if fname:
+                    entity_list.append({"field_name": fname, "value": val})
+            doc_summaries.append(
+                {
+                    "doc_id": doc_id,
+                    "type": self._extract_prop(doc, "type") or "unknown",
+                    "entities": entity_list,
+                }
+            )
+
+        bundle_description = self._build_bundle_description(doc_summaries)
+
+        dispatch_sys = (
+            "Ban la chuyen vien phan loai cong van noi bo. "
+            "Phan tich cong van va xac dinh: chu de, tag, muc do khan cap. "
+            'Tra ve JSON: {"subject_tags": ["..."], '
+            '"urgency": "normal|urgent|emergency", "summary": "..."}'
+        )
+        messages = [
+            {"role": "system", "content": dispatch_sys},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "case_id": case_id,
+                        "bundle_description": bundle_description,
+                        "instruction": (
+                            "Xac dinh chu de cong van noi bo va muc do khan cap. "
+                            "subject_tags: toi da 5 tag ngan gon bang tieng Viet. "
+                            "urgency: normal/urgent/emergency."
+                        ),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ]
+
+        result_data: dict[str, Any] = {}
+        for attempt in range(2):
+            completion = await self.client.chat(
+                messages=messages,
+                model=self.profile.model,
+                temperature=0.2,
+                max_tokens=512,
+                response_format={"type": "json_object"},
+            )
+            content = completion.choices[0].message.content or ""
+            cleaned = re.sub(r"^```(?:json)?\s*\n?", "", content.strip())
+            cleaned = re.sub(r"\n?```\s*$", "", cleaned).strip()
+            try:
+                result_data = json.loads(cleaned)
+                break
+            except json.JSONDecodeError:
+                if attempt == 1:
+                    result_data = {"subject_tags": [], "urgency": "normal", "summary": ""}
+
+        subject_tags = result_data.get("subject_tags", [])
+        urgency = result_data.get("urgency", "normal")
+        if urgency not in {"normal", "urgent", "emergency"}:
+            urgency = "normal"
+
+        # Store subject_tags on Case vertex
+        await self._get_gdb().execute(
+            "g.V().has('Case', 'case_id', cid)"
+            ".property('subject_tags', tags)"
+            ".property('urgency', urg)",
+            {"cid": case_id, "tags": json.dumps(subject_tags, ensure_ascii=False), "urg": urgency},
+        )
+
+        duration_ms = (time.monotonic() - start_time) * 1000
+        usage = self.client.reset_usage()
+
+        await self._log_step(
+            step_id=step_id,
+            case_id=case_id,
+            action="pipeline_dispatch_classifier",
+            usage=usage,
+            duration_ms=duration_ms,
+            status="completed",
+        )
+        await self._broadcast(
+            case_id,
+            "agent_completed",
+            {
+                "agent_name": self.profile.name,
+                "step_id": step_id,
+                "subject_tags": subject_tags,
+                "urgency": urgency,
+                "duration_ms": round(duration_ms),
+            },
+        )
+        return AgentResult(
+            agent_name=self.profile.name,
+            case_id=case_id,
+            status="completed",
+            output=json.dumps(
+                {
+                    "case_type": "internal_dispatch",
+                    "subject_tags": subject_tags,
+                    "urgency": urgency,
+                    "summary": result_data.get("summary", ""),
+                },
+                ensure_ascii=False,
+            ),
+            tool_calls_count=0,
+            usage=usage,
+            duration_ms=duration_ms,
+        )
 
 
 # Register with orchestrator

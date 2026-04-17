@@ -18,8 +18,8 @@ from src.database import create_pg_pool, get_pg_pool, close_pg_pool
 
 DATA_FILE = Path("data/legal/processed/law_chunks.jsonl")
 EMBED_MODEL = "text-embedding-v3"
-EMBED_DIM = 1536
-BATCH_SIZE = 20
+EMBED_DIM = 1024         # DashScope v3 only supports 512 | 768 | 1024
+BATCH_SIZE = 10          # DashScope v3 max batch size
 
 
 def has_valid_api_key() -> bool:

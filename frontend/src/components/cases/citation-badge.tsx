@@ -1,28 +1,43 @@
-import { cn } from "@/lib/utils"
+import * as React from "react";
+import { cn } from "@/lib/utils";
+import { LawChunkPopover } from "./law-chunk-popover";
 
 export interface Citation {
-  law_name: string
-  article: string
-  relevance: number // 0-1 float
+  law_name: string;
+  article: string;
+  relevance: number; // 0-1 float
+  /** Optional: chunk ID for popover detail */
+  chunkId?: string;
 }
 
 interface CitationBadgeProps {
-  citation: Citation
-  className?: string
+  citation: Citation;
+  className?: string;
+  onClick?: () => void;
 }
 
-export function CitationBadge({ citation, className }: CitationBadgeProps) {
-  const relevancePct = Math.round(citation.relevance * 100)
+function CitationBadgeInner({
+  citation,
+  className,
+  onClick,
+  asButton,
+}: CitationBadgeProps & { asButton?: boolean }) {
+  const relevancePct = Math.round(citation.relevance * 100);
+  const Tag = (asButton || onClick) ? "button" : "span";
 
   return (
-    <span
-      role="note"
+    <Tag
+      role={(asButton || onClick) ? "button" : "note"}
+      type={(asButton || onClick) ? "button" : undefined}
       aria-label={`Trích dẫn: ${citation.law_name}, ${citation.article}, độ liên quan ${relevancePct}%`}
+      onClick={onClick}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5",
         "text-[11px] font-medium whitespace-nowrap",
         "transition-colors duration-150",
-        className
+        (asButton || onClick) &&
+          "cursor-pointer hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400",
+        className,
       )}
       style={{
         borderColor: "oklch(0.55 0.18 300 / 0.4)",
@@ -51,6 +66,33 @@ export function CitationBadge({ citation, className }: CitationBadgeProps) {
       >
         {relevancePct}%
       </span>
-    </span>
-  )
+    </Tag>
+  );
+}
+
+export function CitationBadge({ citation, className, onClick }: CitationBadgeProps) {
+  // When chunkId is available, wrap in LawChunkPopover for rich detail
+  if (citation.chunkId) {
+    return (
+      <LawChunkPopover
+        chunkId={citation.chunkId}
+        fallback={{ lawName: citation.law_name, article: citation.article }}
+        trigger={
+          <CitationBadgeInner
+            citation={citation}
+            className={className}
+            asButton
+          />
+        }
+      />
+    );
+  }
+
+  return (
+    <CitationBadgeInner
+      citation={citation}
+      className={className}
+      onClick={onClick}
+    />
+  );
 }

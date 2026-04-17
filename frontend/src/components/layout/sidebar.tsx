@@ -7,6 +7,7 @@ import {
   Upload,
   Inbox,
   ShieldCheck,
+  MessagesSquare,
   FileText,
   GitBranch,
   Lock,
@@ -23,36 +24,31 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useWSState } from "@/hooks/use-ws";
+import { ROLE_LABELS } from "@/lib/roles";
 
 // ---------------------------------------------------------------------------
 // Nav item definitions
 // ---------------------------------------------------------------------------
 
-const NAV_ITEMS = [
-  { label: "Bảng điều hành", href: "/dashboard",  icon: LayoutDashboard },
-  { label: "Tiếp nhận",       href: "/intake",     icon: Upload },
-  { label: "Hồ sơ đến",       href: "/inbox",      icon: Inbox },
-  { label: "Tuân thủ",         href: "/compliance", icon: ShieldCheck },
-  { label: "Tài liệu",        href: "/documents",  icon: FileText },
-  { label: "Theo dõi AI",      href: "/trace",      icon: GitBranch },
-  { label: "Bảo mật",         href: "/security",   icon: Lock },
-] as const;
+// Each nav item lists roles allowed to see it. Matches backend permission
+// checks: /leadership/* is leader/admin only; /security is admin only.
+interface NavItemSpec {
+  label: string;
+  href: string;
+  icon: React.ElementType;
+  roles?: string[]; // undefined = visible to all authenticated users
+}
 
-// ---------------------------------------------------------------------------
-// Role labels (Vietnamese)
-// ---------------------------------------------------------------------------
-
-const ROLE_LABELS: Record<string, string> = {
-  admin:           "Quản trị viên",
-  leader:          "Lãnh đạo",
-  officer:         "Cán bộ",
-  staff_intake:    "Cán bộ tiếp nhận",
-  staff_processor: "Cán bộ xử lý",
-  legal:           "Pháp chế",
-  security:        "An ninh",
-  public_viewer:   "Xem công khai",
-  citizen:         "Công dân",
-};
+const NAV_ITEMS: NavItemSpec[] = [
+  { label: "Bảng điều hành", href: "/dashboard",  icon: LayoutDashboard, roles: ["admin", "leader", "security"] },
+  { label: "Tiếp nhận",       href: "/intake",     icon: Upload,        roles: ["admin", "leader", "staff_intake", "staff_processor", "security"] },
+  { label: "Hồ sơ đến",       href: "/inbox",      icon: Inbox,         roles: ["admin", "leader", "staff_intake", "staff_processor", "legal", "security"] },
+  { label: "Tuân thủ",         href: "/compliance", icon: ShieldCheck,   roles: ["admin", "leader", "staff_processor", "legal", "security"] },
+  { label: "Xin ý kiến",      href: "/consult",    icon: MessagesSquare,roles: ["admin", "leader", "staff_processor", "legal", "security"] },
+  { label: "Tài liệu",        href: "/documents",  icon: FileText,      roles: ["admin", "leader", "staff_intake", "staff_processor", "legal", "security"] },
+  { label: "Theo dõi AI",      href: "/trace",      icon: GitBranch,     roles: ["admin", "leader", "staff_processor", "legal", "security"] },
+  { label: "Bảo mật",         href: "/security",   icon: Lock,          roles: ["admin", "security"] },
+];
 
 // ---------------------------------------------------------------------------
 // Clearance level badge config
@@ -258,7 +254,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           aria-label="Điều hướng"
           className="flex flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden p-2"
         >
-          {NAV_ITEMS.map(({ label, href, icon }) => {
+          {NAV_ITEMS.filter(
+            (item) => !item.roles || (user && item.roles.includes(user.role)),
+          ).map(({ label, href, icon }) => {
             const isActive =
               pathname === href || pathname.startsWith(href + "/");
             return (
@@ -316,7 +314,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold uppercase text-white"
                 style={{ backgroundColor: "var(--accent-primary)" }}
               >
-                {user.username.slice(0, 2)}
+                {(user.full_name ?? user.username).slice(0, 2)}
               </div>
 
               {!collapsed && (
@@ -330,7 +328,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                     className="truncate text-xs font-semibold leading-none"
                     style={{ color: "var(--text-primary)" }}
                   >
-                    {user.username}
+                    {user.full_name || user.username}
                   </span>
                   <span
                     className={cn(

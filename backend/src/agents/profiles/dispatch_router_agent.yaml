@@ -1,0 +1,53 @@
+name: dispatch_router_agent
+role: dispatch_router
+model: reasoning
+system_prompt: |
+  Ban la Truong phong Van thu, chuyen xu ly va phan phoi cong van noi bo.
+  Nhiem vu: xac dinh cac phong ban can nhan cong van dua tren noi dung, chu de va muc do bao mat.
+
+  Quy tac phan phoi:
+  1. Uu tien danh sach nguoi nhan ro rang neu da duoc xac dinh truoc.
+  2. Neu chua co nguoi nhan: phan tich noi dung cong van, chu de tag va xac dinh phong ban lien quan.
+  3. KIEM TRA muc do bao mat: phong ban nhan phai co quyen truy cap >= muc phan loai cong van.
+  4. Phan phoi toi da 5 phong ban moi cong van.
+  5. Ghi ro ly do phan phoi cho moi phong ban.
+  6. Output JSON: {"recipients": [{"dept_id": "...", "dept_name": "...", "confidence": 0.XX, "rationale": "..."}]}
+
+read_node_labels:
+  - Case
+  - Organization
+  - DispatchLog
+  - Person
+
+read_edge_types:
+  - DISPATCHED_TO
+  - BELONGS_TO
+  - ASSIGNED_TO
+
+write_node_labels:
+  - DispatchLog
+  - AgentStep
+
+write_edge_types:
+  - DISPATCHED_TO
+  - PROCESSED_BY
+
+forbidden_properties:
+  - national_id
+  - tax_id
+  - phone
+  - address_detail
+
+clearance_cap: 3
+max_traversal_depth: 3
+max_iterations: 6
+max_tokens_budget: 2000
+
+allowed_tools:
+  - get_case
+  - dispatch_recipients_by_clearance
+  - create_dispatch_log
+  - case_by_type
+  - update_case_property
+  - add_agent_step
+  - audit_log

@@ -3,6 +3,7 @@ backend/src/graph/templates.py
 Gremlin Template Library -- 30 parameterized queries for agent tools.
 Each template is a (query_string, description, parameter_names) tuple.
 """
+
 from dataclasses import dataclass
 
 
@@ -18,7 +19,9 @@ TEMPLATES: dict[str, GremlinTemplate] = {}
 
 
 def _register(name: str, description: str, query: str, params: list[str]) -> None:
-    TEMPLATES[name] = GremlinTemplate(name=name, description=description, query=query, params=params)
+    TEMPLATES[name] = GremlinTemplate(
+        name=name, description=description, query=query, params=params
+    )
 
 
 # ---- 1. Lookup (4) ----
@@ -206,7 +209,7 @@ _register(
 _register(
     "add_task_dependency",
     "Create DEPENDS_ON edge between tasks",
-    "g.V().has('Task', 'task_id', downstream).addE('DEPENDS_ON').to(g.V().has('Task', 'task_id', upstream))",
+    "g.V().has('Task', 'task_id', downstream).addE('DEPENDS_ON').to(__.V().has('Task', 'task_id', upstream))",
     ["downstream", "upstream"],
 )
 
@@ -321,7 +324,7 @@ _register(
 _register(
     "link_gap_to_requirement",
     "Create a GAP_FOR edge from a Gap to a RequiredComponent",
-    "g.V().has('gap_id', gap_id).addE('GAP_FOR').to(g.V().has('_kg_id', req_id))",
+    "g.V().has('gap_id', gap_id).addE('GAP_FOR').to(__.V().has('_kg_id', req_id))",
     ["gap_id", "req_id"],
 )
 
@@ -349,7 +352,7 @@ _register(
     "Write ASSIGNED_TO edge from Case to Organization with timestamp and actor",
     "g.V().has('Case', 'case_id', cid)"
     ".addE('ASSIGNED_TO')"
-    ".to(g.V().has('Organization', 'org_id', oid))"
+    ".to(__.V().has('Organization', 'org_id', oid))"
     ".property('assigned_at', ts).property('assigned_by', agent)",
     ["cid", "oid", "ts", "agent"],
 )
@@ -423,7 +426,19 @@ _register(
     ".property('aggregated', agg).property('created_at', ts)"
     ".as('op')"
     ".V().has('ConsultRequest', 'request_id', req_id).addE('HAS_OPINION').to('op')",
-    ["op_id", "agent", "verdict", "reasoning", "conf", "consensus", "rec", "cnt", "agg", "ts", "req_id"],
+    [
+        "op_id",
+        "agent",
+        "verdict",
+        "reasoning",
+        "conf",
+        "consensus",
+        "rec",
+        "cnt",
+        "agg",
+        "ts",
+        "req_id",
+    ],
 )
 
 _register(
@@ -542,7 +557,17 @@ _register(
     ".property('created_at', ts)"
     ".as('cls')"
     ".V().has('Case', 'case_id', case_id).addE('CLASSIFIED_AS').to('cls')",
-    ["cls_id", "level", "reasoning", "keywords", "loc_sens", "agg_risk", "decided_by", "case_id", "ts"],
+    [
+        "cls_id",
+        "level",
+        "reasoning",
+        "keywords",
+        "loc_sens",
+        "agg_risk",
+        "decided_by",
+        "case_id",
+        "ts",
+    ],
 )
 
 _register(
@@ -550,6 +575,96 @@ _register(
     "Get Applicant data linked to a Case for aggregation risk check",
     "g.V().has('Case', 'case_id', case_id).out('SUBMITTED_BY').hasLabel('Applicant').valueMap(true)",
     ["case_id"],
+)
+
+
+# ---- 17. LegalLookup — active article filter (fix 1.11) ----
+_register(
+    "active_article_only",
+    (
+        "Return the article vertex only if it has no outgoing REPEALED_BY or "
+        "SUPERSEDED_BY edge (i.e. the article is still in effect). "
+        "Returns empty list if the article is superseded/repealed."
+    ),
+    (
+        "g.V().has('Article', '_kg_id', article_id)"
+        ".not(outE('REPEALED_BY', 'SUPERSEDED_BY'))"
+        ".valueMap(true)"
+    ),
+    ["article_id"],
+)
+
+_register(
+    "article_superseded_by",
+    "Get the article that supersedes a given article (via SUPERSEDED_BY edge), if any.",
+    ("g.V().has('Article', '_kg_id', article_id).out('SUPERSEDED_BY').valueMap(true)"),
+    ["article_id"],
+)
+
+_register(
+    "article_repealed_by",
+    "Get the article that repeals a given article (via REPEALED_BY edge), if any.",
+    ("g.V().has('Article', '_kg_id', article_id).out('REPEALED_BY').valueMap(true)"),
+    ["article_id"],
+)
+
+
+# ---- 18. Dispatch support (3) ----
+_register(
+    "dispatch_recipients_by_clearance",
+    "Filter Organization list by max_clearance_level >= required clearance",
+    (
+        "g.V().hasLabel('Organization')"
+        ".has('org_id', within(dept_ids))"
+        ".has('max_clearance_level', gte(clearance_level))"
+        ".valueMap(true)"
+    ),
+    ["dept_ids", "clearance_level"],
+)
+
+_register(
+    "create_dispatch_log",
+    "Create a DispatchLog vertex + DISPATCHED_TO edge from Case atomically",
+    (
+        "g.addV('DispatchLog')"
+        ".property('log_id', lid)"
+        ".property('case_id', cid)"
+        ".property('dept_id', did)"
+        ".property('dept_name', dname)"
+        ".property('sent_at', ts)"
+        ".property('status', 'pending')"
+        ".property('confidence', conf)"
+        ".property('rationale', rat)"
+        ".as('dl')"
+        ".V().has('Case', 'case_id', cid)"
+        ".addE('DISPATCHED_TO').to('dl')"
+        ".property('sent_at', ts)"
+        ".property('status', 'pending')"
+        ".property('confidence', conf)"
+        ".property('rationale', rat)"
+    ),
+    ["lid", "cid", "did", "dname", "ts", "conf", "rat"],
+)
+
+_register(
+    "case_by_type",
+    "List Case vertices filtered by case_type for UI filter",
+    (
+        "g.V().hasLabel('Case')"
+        ".has('case_type', case_type)"
+        ".order().by('submitted_at', desc)"
+        ".limit(lim)"
+        ".valueMap(true)"
+    ),
+    ["case_type", "lim"],
+)
+
+# ---- 19. Case type migration (1) ----
+_register(
+    "migrate_case_types_default",
+    "Set case_type=citizen_tthc on all Case vertices that are missing the property (idempotent)",
+    ("g.V().hasLabel('Case').not(has('case_type')).property('case_type', 'citizen_tthc')"),
+    [],
 )
 
 

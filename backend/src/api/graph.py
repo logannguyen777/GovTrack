@@ -1,13 +1,19 @@
 """backend/src/api/graph.py"""
+
+from __future__ import annotations
+
 import time
 
 from fastapi import APIRouter, Depends
 
 from ..auth import CurrentUser, TokenClaims, require_role
-from ..database import gremlin_submit
+from ..graph.deps import PermittedGDBDep
 from ..models.schemas import (
-    GraphQueryRequest, GraphQueryResponse,
-    SubgraphResponse, GraphNode, GraphEdge,
+    GraphEdge,
+    GraphNode,
+    GraphQueryRequest,
+    GraphQueryResponse,
+    SubgraphResponse,
 )
 
 router = APIRouter(prefix="/graph", tags=["Graph"])
@@ -16,26 +22,27 @@ router = APIRouter(prefix="/graph", tags=["Graph"])
 @router.post("/query", response_model=GraphQueryResponse)
 async def query_graph(
     body: GraphQueryRequest,
+    gdb: PermittedGDBDep,
     user: TokenClaims = Depends(require_role("admin")),
 ):
     """Execute a raw Gremlin query (admin only)."""
     start = time.monotonic()
-    result = gremlin_submit(body.query, body.bindings)
+    result = await gdb.execute(body.query, body.bindings)
     elapsed = (time.monotonic() - start) * 1000
     return GraphQueryResponse(result=result, execution_time_ms=round(elapsed, 2))
 
 
 @router.get("/case/{case_id}/subgraph", response_model=SubgraphResponse)
-async def get_case_subgraph(case_id: str, user: CurrentUser):
+async def get_case_subgraph(case_id: str, user: CurrentUser, gdb: PermittedGDBDep):
     """Get the case subgraph for React Flow visualization."""
     # Get vertices using elementMap() which returns id, label, and properties
-    vertices = gremlin_submit(
+    vertices = await gdb.execute(
         "g.V().has('Case', 'case_id', cid)"
         ".bothE().bothV().dedup().elementMap()",
         {"cid": case_id},
     )
     # Get edges
-    edges = gremlin_submit(
+    edges = await gdb.execute(
         "g.V().has('Case', 'case_id', cid)"
         ".bothE().project('id','source','target','label')"
         ".by(id).by(outV().id()).by(inV().id()).by(label)",
@@ -49,10 +56,9 @@ async def get_case_subgraph(case_id: str, user: CurrentUser):
         props = {}
         for k, val in v.items():
             k_str = str(k)
-            # gremlin_python T enum: <T.id: 1>, <T.label: 4>
-            if "T.id" in k_str:
+            if k_str in ("id", "T.id") or "T.id" in k_str:
                 v_id = str(val)
-            elif "T.label" in k_str:
+            elif k_str in ("label", "T.label") or "T.label" in k_str:
                 v_label = str(val)
             else:
                 props[str(k)] = val
@@ -60,8 +66,10 @@ async def get_case_subgraph(case_id: str, user: CurrentUser):
 
     edge_list = [
         GraphEdge(
-            id=str(e["id"]), source=str(e["source"]),
-            target=str(e["target"]), label=e["label"],
+            id=str(e["id"]),
+            source=str(e["source"]),
+            target=str(e["target"]),
+            label=e["label"],
         )
         for e in edges
     ]

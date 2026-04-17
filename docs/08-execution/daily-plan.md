@@ -161,34 +161,40 @@ Full scope + 5 TTHC deep + top-tier UI/UX + 3-scene permission demo + full Aliba
 
 ---
 
-## Day 16/04 — Polish + benchmark + video
+## Day 16/04 — Polish + benchmark + video  ✅ COMPLETED
 
 ### Morning
 
-- [ ] UI polish pass 2: microinteractions, hover states, toast notifications
-- [ ] Error states + edge case handling
-- [ ] Mobile responsive for Citizen Portal
-- [ ] Accessibility pass (WCAG AA, keyboard, aria labels)
+- [x] UI polish pass 2: microinteractions, hover states, toast notifications
+- [x] Error states + edge case handling
+- [x] Mobile responsive for Citizen Portal
+- [x] Accessibility pass (WCAG AA, keyboard, aria labels)
 
 ### Afternoon
 
-- [ ] Benchmark: run 25 test cases (5 per TTHC)
-- [ ] Measure: classification accuracy, compliance accuracy, latency p50/p95, agent reasoning quality
-- [ ] Fix critical bugs found during benchmark
-- [ ] Edge case security demo: location near military zone case
+- [x] Benchmark: run 25 test cases (5 per TTHC)
+- [x] Measure: classification accuracy, compliance accuracy, latency p50/p95, agent reasoning quality
+- [x] Fix critical bugs found during benchmark
+- [x] Edge case security demo: location near military zone case
 
 ### Evening
 
-- [ ] Record demo video 2:30 (following [`../07-pitch/demo-video-storyboard.md`](../07-pitch/demo-video-storyboard.md))
-- [ ] Voiceover recording (Vietnamese + English subtitle)
-- [ ] Edit in DaVinci Resolve or CapCut
-- [ ] Write pitch deck (10 slides) in Figma or Google Slides
+- [x] Write pitch deck (10 slides) in Figma or Google Slides
+- [x] README.md + docs/PRODUCTION.md + docs/07-pitch/devpost.md
+- [x] backend/.env.example + frontend/.env.example
+- [x] scripts/smoke_test.sh
+- [ ] Record demo video 2:30 (following [`../07-pitch/demo-video-storyboard.md`](../07-pitch/demo-video-storyboard.md)) — IN PROGRESS
+- [ ] Voiceover recording (Vietnamese + English subtitle) — PENDING
 
 **End-of-day deliverable:**
-- [ ] Production polished UI
-- [ ] Benchmark data ready for pitch
-- [ ] Demo video v1 recorded
-- [ ] Pitch deck draft
+- [x] Production polished UI (280 tests passing)
+- [x] Full security hardening (Argon2, JWT revocation, SSRF, CSP, 3-tier ABAC, STS+SSE-KMS, audit middleware)
+- [x] Complete observability stack (OTel + Prometheus + Sentry)
+- [x] Alembic migrations, rate limiting, DSR endpoints (NĐ 13/2023)
+- [x] Internal Dispatch flow (CaseType + PIPELINE_DISPATCH + DispatchRouterAgent + scenario_6)
+- [x] Devpost writeup template + README + PRODUCTION.md
+- [ ] Demo video — record on 17/04 morning
+- [ ] Pitch deck — finalize on 17/04 morning
 
 ---
 

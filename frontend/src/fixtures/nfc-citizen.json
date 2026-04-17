@@ -1,0 +1,7 @@
+{
+  "applicant_name": "Nguyễn Văn A",
+  "applicant_id_number": "024097012345",
+  "applicant_phone": "0901234567",
+  "applicant_address": "123 Đường Láng, Đống Đa, Hà Nội",
+  "_note": "Fixture dùng cho demo mô phỏng quét NFC CCCD. Không phải dữ liệu thật."
+}

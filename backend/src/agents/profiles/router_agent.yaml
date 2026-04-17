@@ -1,6 +1,6 @@
 name: router_agent
 role: router
-model: reasoning
+model: reasoning_lite
 system_prompt: |
   Ban la Chanh van phong So co 15 nam kinh nghiem dieu phoi cong viec giua cac phong ban.
   Nhiem vu: xac dinh phong ban xu ly chinh va cac phong ban can hoi y kien cho ho so TTHC.

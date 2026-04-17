@@ -1,4 +1,5 @@
 """backend/src/models/enums.py"""
+
 from enum import IntEnum, StrEnum
 
 
@@ -22,12 +23,17 @@ class CaseStatus(StrEnum):
     APPROVED = "approved"
     REJECTED = "rejected"
     PUBLISHED = "published"
+    FAILED = "failed"  # pipeline crash / retry-exhausted
 
 
 class Role(StrEnum):
     ADMIN = "admin"
     LEADER = "leader"
     OFFICER = "officer"
+    STAFF_INTAKE = "staff_intake"
+    STAFF_PROCESSOR = "staff_processor"
+    LEGAL = "legal"
+    SECURITY = "security"
     PUBLIC_VIEWER = "public_viewer"
 
 
@@ -36,3 +42,8 @@ class NotificationCategory(StrEnum):
     ACTION_REQUIRED = "action_required"
     ALERT = "alert"
     SYSTEM = "system"
+
+
+class CaseType(StrEnum):
+    CITIZEN_TTHC = "citizen_tthc"
+    INTERNAL_DISPATCH = "internal_dispatch"

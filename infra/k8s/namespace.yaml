@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: govflow
+  labels:
+    app.kubernetes.io/name: govflow
+    app.kubernetes.io/managed-by: kubectl

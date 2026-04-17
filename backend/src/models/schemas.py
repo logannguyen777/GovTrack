@@ -2,14 +2,14 @@
 backend/src/models/schemas.py
 Pydantic v2 request/response models for all API routes.
 """
+
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from .enums import CaseStatus, ClearanceLevel, NotificationCategory, Role
+from .enums import CaseStatus, CaseType, ClearanceLevel, NotificationCategory
 
 
 # ---- Auth ----
@@ -24,6 +24,7 @@ class LoginResponse(BaseModel):
     user_id: str
     role: str
     clearance_level: int
+    full_name: str = ""
 
 
 # ---- Cases ----
@@ -35,6 +36,7 @@ class CaseCreate(BaseModel):
     applicant_phone: str = ""
     applicant_address: str = ""
     notes: str = ""
+    case_type: CaseType = CaseType.CITIZEN_TTHC
 
 
 class CaseResponse(BaseModel):
@@ -45,9 +47,23 @@ class CaseResponse(BaseModel):
     department_id: str
     submitted_at: datetime
     applicant_name: str
+    case_type: CaseType = CaseType.CITIZEN_TTHC
     processing_days: int | None = None
     sla_days: int | None = None
     is_overdue: bool = False
+    # Sensitive fields from Applicant vertex — masked by PermittedGremlinClient
+    # based on the caller's role + clearance (Tier 3 property mask).
+    applicant_id_number: str | None = None
+    applicant_phone: str | None = None
+    applicant_address: str | None = None
+
+
+class ConsultSubmitRequest(BaseModel):
+    """Submit a human consult opinion (2.1 endpoint body)."""
+
+    opinion: str = Field(..., min_length=1, max_length=10000)
+    recommendation: str = Field(..., description="approve | reject | request_supplement")
+    attachments: list[str] = Field(default_factory=list, description="Optional list of doc_ids")
 
 
 class CaseListResponse(BaseModel):
@@ -66,6 +82,7 @@ class BundleFileInfo(BaseModel):
 
 class BundleCreate(BaseModel):
     """Metadata for a new document bundle upload."""
+
     files: list[BundleFileInfo]
 
 
@@ -94,6 +111,7 @@ class DocumentResponse(BaseModel):
 # ---- Agents ----
 class AgentRunRequest(BaseModel):
     """Trigger agent processing on a case."""
+
     pipeline: str = "full"  # full | classify_only | gap_check_only
 
 
@@ -120,11 +138,45 @@ class AgentTraceResponse(BaseModel):
 
 # ---- Consult ----
 class ConsultOpinionSubmit(BaseModel):
-    """Submit a department opinion for a consult request."""
-    content: str = Field(..., min_length=1, max_length=5000)
-    verdict: str = Field(default="neutral", description="dong_y | khong_dong_y | dong_y_co_dieu_kien | neutral")
-    source_org_id: str
-    source_org_name: str
+    """Submit a department opinion for a consult request.
+
+    Accepts both legacy field names (content/source_org_id/source_org_name/verdict)
+    and frontend field names (opinion/department_id/department_name/stance).
+    """
+
+    model_config = {"populate_by_name": True}
+
+    content: str | None = Field(default=None, min_length=0, max_length=5000)
+    opinion: str | None = Field(default=None, description="Alias for content (frontend field)")
+    verdict: str | None = Field(
+        default=None, description="dong_y | khong_dong_y | dong_y_co_dieu_kien | neutral"
+    )
+    stance: str | None = Field(
+        default=None,
+        description="Alias for verdict (frontend: agree|disagree|abstain)",
+    )
+    source_org_id: str | None = None
+    source_org_name: str | None = None
+    department_id: str | None = Field(default=None, description="Alias for source_org_id")
+    department_name: str | None = Field(default=None, description="Alias for source_org_name")
+    confidence: float | None = None
+    author_name: str | None = None
+    citation: list[str] = Field(default_factory=list)
+
+    def get_content(self) -> str:
+        return self.content or self.opinion or ""
+
+    def get_verdict(self) -> str:
+        v = self.verdict or self.stance or "neutral"
+        # Map frontend stance values to backend verdict values
+        stance_map = {"agree": "dong_y", "disagree": "khong_dong_y", "abstain": "neutral"}
+        return stance_map.get(v, v)
+
+    def get_source_org_id(self) -> str:
+        return self.source_org_id or self.department_id or ""
+
+    def get_source_org_name(self) -> str:
+        return self.source_org_name or self.department_name or ""
 
 
 class ConsultRequestResponse(BaseModel):
@@ -144,6 +196,7 @@ class ConsultRequestResponse(BaseModel):
 # ---- Graph ----
 class GraphQueryRequest(BaseModel):
     """Admin-only raw Gremlin query."""
+
     query: str
     bindings: dict = Field(default_factory=dict)
 
@@ -168,6 +221,7 @@ class GraphEdge(BaseModel):
 
 class SubgraphResponse(BaseModel):
     """Case subgraph for React Flow visualization."""
+
     nodes: list[GraphNode]
     edges: list[GraphEdge]
 
@@ -272,9 +326,40 @@ class PublicStatsResponse(BaseModel):
     satisfaction_rate: float | None = None
 
 
+# ---- Data Subject Rights (NĐ 13/2023, Wave 3.11) ----
+
+
+class ConsentLogEntry(BaseModel):
+    consent_id: str
+    user_id: str
+    purpose: str
+    action: str  # granted | revoked
+    ip_address: str | None = None
+    user_agent: str | None = None
+    timestamp: datetime
+
+
+class DataSubjectAccessResponse(BaseModel):
+    user_id: str
+    exported_at: datetime
+    cases: list[dict]
+    documents: list[dict]
+    audit_events: list[dict]
+    consent_history: list[ConsentLogEntry]
+
+
+class DeletionRequest(BaseModel):
+    ticket_id: str
+    user_id: str
+    status: str  # PENDING_REVIEW | APPROVED | REJECTED | COMPLETED
+    requested_at: datetime
+    notes: str | None = None
+
+
 # ---- Permission Engine ----
 class AgentProfile(BaseModel):
     """Permission profile for an agent, used by the 3-tier permission engine."""
+
     agent_id: str
     agent_name: str
     clearance: ClearanceLevel

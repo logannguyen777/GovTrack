@@ -1,3 +1,4 @@
+import * as React from "react"
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 
@@ -20,6 +21,10 @@ const buttonVariants = cva(
         "destructive-confirm":
           "bg-destructive text-white ring-2 ring-destructive/30 hover:bg-destructive/90 focus-visible:ring-destructive/50",
         link: "text-primary underline-offset-4 hover:underline",
+        qwen:
+          "text-white transition-transform hover:scale-[1.02] active:scale-[0.99]",
+        "qwen-soft":
+          "text-[var(--text-primary)] transition-transform hover:scale-[1.02] active:scale-[0.99]",
       },
       size: {
         default:
@@ -42,16 +47,33 @@ const buttonVariants = cva(
   }
 )
 
+const QWEN_STYLES: Record<string, React.CSSProperties> = {
+  qwen: {
+    background: "var(--gradient-qwen)",
+    boxShadow: "var(--shadow-qwen-glow)",
+  },
+  "qwen-soft": {
+    background: "var(--gradient-qwen-soft)",
+  },
+}
+
 function Button({
   className,
   variant = "default",
   size = "default",
+  style,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  const qwenStyle =
+    variant === "qwen" || variant === "qwen-soft"
+      ? QWEN_STYLES[variant]
+      : undefined
+
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      style={qwenStyle ? { ...qwenStyle, ...style } : style}
       {...props}
     />
   )

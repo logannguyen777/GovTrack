@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ...database import async_gremlin_submit
+# async_gremlin_submit replaced by self._get_gdb().execute() per task 1.1
 from ..base import BaseAgent
 from ..orchestrator import register_agent
 
@@ -19,10 +19,10 @@ class IntakeAgent(BaseAgent):
     async def build_messages(self, case_id: str) -> list[dict[str, Any]]:
         """Build messages with case context."""
         # Fetch case data
-        case_data = await async_gremlin_submit(
+        case_data = await self._get_gdb().execute(
             "g.V().has('Case', 'case_id', cid).valueMap(true)", {"cid": case_id},
         )
-        documents = await async_gremlin_submit(
+        documents = await self._get_gdb().execute(
             "g.V().has('Case', 'case_id', cid)"
             ".out('HAS_BUNDLE').out('CONTAINS').hasLabel('Document')"
             ".valueMap(true)",
@@ -35,7 +35,7 @@ class IntakeAgent(BaseAgent):
             tthc_code = case_data[0].get("tthc_code", [""])[0]
         tthc_spec = {}
         if tthc_code:
-            specs = await async_gremlin_submit(
+            specs = await self._get_gdb().execute(
                 "g.V().has('TTHCSpec', 'code', code).valueMap(true)",
                 {"code": tthc_code},
             )

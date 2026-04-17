@@ -463,6 +463,56 @@ When user without proper clearance tries to access → SecurityOfficer intercept
 | Drafter | Output generation | Case, Decision, Template | Draft | Confidential |
 | **SecurityOfficer** | **Classification + access** | **Everything incl. PII** | **Classification, AuditEvent** | **Top Secret** |
 
+## Agent 11 — DispatchRouterAgent
+
+### Role
+Xử lý luồng **Internal Dispatch** (`CaseType.INTERNAL_DISPATCH`). Nhận công văn nội bộ (phối hợp xử lý, chuyển giao hồ sơ), xác định phòng ban tiếp nhận, mức độ ưu tiên, và classification level.
+
+### Model
+Qwen3-Max.
+
+### Input
+- `case_id` với `case_type = "internal_dispatch"`
+- Documents từ DocAnalyzer (công văn OCR'd)
+
+### Output
+- `DispatchLog` vertex: target_department, priority, classification, routing_reason
+- Trigger Summarizer (executive brief mode)
+- Trigger Drafter (phiếu trình)
+- WebSocket notification đến Leader inbox
+
+### Permission scope
+- **Read:** Case, Documents (processed), Organization, Position (KG)
+- **Write:** DispatchLog, ASSIGNED_TO edge, Task vertices
+- **Clearance cap:** Confidential (công văn nội bộ thường >= CONFIDENTIAL)
+
+### Pipeline
+`PIPELINE_DISPATCH` (khác với `PIPELINE_CITIZEN_TTHC`):
+```
+DocAnalyzer → DispatchRouterAgent → Summarizer (executive) → Drafter (phiếu trình) → Leader notify
+```
+
+### Demo
+`scripts/demo/scenario_6_internal_dispatch.py`
+
+---
+
+## Agent-level permission summary table
+
+| Agent | Primary Purpose | Read Scope | Write Scope | Clearance Cap |
+|---|---|---|---|---|
+| Planner | Plan execution | Case, TTHCSpec, Org (KG) | Task, PROCESSED_BY | Confidential |
+| DocAnalyzer | OCR + extract | Bundle blobs, Document raw | Document props, ExtractedEntity | Top Secret |
+| Classifier | TTHC matching | Case, Doc metadata, TTHC (KG) | MATCHES_TTHC edge | Confidential |
+| Compliance | Gap detection | Case, Docs, Entities, TTHC, Articles | Gap, Citation, HAS_GAP, CITES | Confidential |
+| LegalLookup | Legal RAG | Law, Decree, Article (filtered) | Citation | Confidential |
+| Router | Department routing | Case metadata, Org (KG) | ASSIGNED_TO, CONSULTED | Confidential |
+| Consult | Cross-dept opinion | Case summary, Gap | ConsultRequest, Opinion | Confidential |
+| Summarizer | Role-aware summary | Case (masked), Docs (redacted) | Summary | varies by role |
+| Drafter | Output generation | Case, Decision, Template | Draft | Confidential |
+| **SecurityOfficer** | **Classification + access** | **Everything incl. PII** | **Classification, AuditEvent** | **Top Secret** |
+| **DispatchRouterAgent** | **Internal dispatch routing** | **Case, Docs, Org (KG)** | **DispatchLog, ASSIGNED_TO** | **Confidential** |
+
 ## Deliberate design choices
 
 1. **DocAnalyzer has Top Secret cap** — it needs to see raw content to do OCR. But output is immediately classified by SecurityOfficer before other agents read it.
@@ -470,3 +520,4 @@ When user without proper clearance tries to access → SecurityOfficer intercept
 3. **Drafter cannot publish** — human-in-the-loop enforced architecturally.
 4. **All agents write AuditEvents** — every graph operation is logged.
 5. **Clearance caps are hard limits** — an agent cannot exceed its cap even if user requests.
+6. **DispatchRouterAgent is Citizen pipeline-independent** — PIPELINE_DISPATCH bypasses Classifier and Compliance (not applicable to internal documents), runs a shorter DAG.

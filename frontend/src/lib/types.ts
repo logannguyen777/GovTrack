@@ -27,6 +27,10 @@ export enum Role {
   ADMIN = "admin",
   LEADER = "leader",
   OFFICER = "officer",
+  STAFF_INTAKE = "staff_intake",
+  STAFF_PROCESSOR = "staff_processor",
+  LEGAL = "legal",
+  SECURITY = "security",
   PUBLIC_VIEWER = "public_viewer",
 }
 
@@ -49,11 +53,13 @@ export interface LoginResponse {
   user_id: string;
   role: string;
   clearance_level: number;
+  full_name?: string;
 }
 
 export interface User {
   user_id: string;
   username: string;
+  full_name?: string;
   role: string;
   clearance_level: number;
   departments: string[];
@@ -244,6 +250,9 @@ export interface PublicCaseStatus {
   submitted_at: string;
   current_step: string | null;
   estimated_completion: string | null;
+  /** Optional – populated when backend returns them */
+  sla_days?: number;
+  processing_days?: number;
 }
 
 export interface PublicTTHCItem {
@@ -267,4 +276,50 @@ export interface WSMessage {
   topic: string;
   event: string;
   data: unknown;
+}
+
+// ---- Chat / AI Assistant ----
+export type ChatRole = "user" | "assistant" | "system" | "tool";
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  args?: Record<string, unknown>;
+  status: "pending" | "success" | "error";
+  result?: unknown;
+  durationMs?: number;
+}
+
+/** Citation used in chat messages and AI recommendation cards */
+export interface Citation {
+  id: string;
+  lawName: string;
+  article: string;
+  url?: string;
+  chunkId?: string;
+}
+
+export interface Attachment {
+  id: string;
+  name: string;
+  url?: string;
+  type: "image" | "pdf" | "other";
+}
+
+export interface Entity {
+  key: string;
+  value: unknown;
+  confidence: number;
+  bbox?: number[];
+}
+
+export interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  createdAt: string;
+  isStreaming?: boolean;
+  toolCalls?: ToolCall[];
+  citations?: Citation[];
+  attachments?: Attachment[];
 }

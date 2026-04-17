@@ -53,3 +53,7 @@ playwright-report/
 # Logs
 *.log
 logs/
+
+# LLM response cache (do not commit)
+.cache/
+backend/.cache/

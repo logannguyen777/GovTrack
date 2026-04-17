@@ -1,17 +1,20 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import * as React from "react";
+import { useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useDropzone } from "react-dropzone";
 import { useCreateCase } from "@/hooks/use-cases";
 import { useAgentTrace } from "@/hooks/use-agents";
 import { useSearchTTHC } from "@/hooks/use-search";
+import { usePublicStats } from "@/hooks/use-public";
 import { apiClient } from "@/lib/api";
 import { AnimatedCounter } from "@/components/ui/animated-counter";
 import type {
   BundleCreate,
   BundleResponse,
   AgentRunRequest,
+  AgentStepResponse,
 } from "@/lib/types";
 import {
   Upload,
@@ -20,9 +23,19 @@ import {
   CheckCircle,
   Loader2,
   ArrowRight,
+  Nfc,
+  Printer,
+  Users,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
+import { HelpHintBanner } from "@/components/ui/help-hint-banner";
+import { OnboardingTour } from "@/components/onboarding/onboarding-tour";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 interface UploadedFile {
   file: File;
@@ -40,6 +53,295 @@ interface OcrPanel {
 
 type Phase = "idle" | "uploading" | "processing" | "done" | "error";
 
+type NfcPhase = "idle" | "reading" | "decoding" | "done";
+
+interface TthcConfidence {
+  code: string;
+  name: string;
+  pct: number;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Extract a text blob from an AgentStepResponse for display in OCR panels.
+ *  AgentStepResponse has no `output_summary`; we read from `action` field
+ *  which the backend populates with a description of what was done. */
+function stepText(step: AgentStepResponse): string {
+  return step.action ?? "";
+}
+
+// NFC demo fixture — auto-fill form with sample citizen data
+import nfcFixture from "@/fixtures/nfc-citizen.json";
+
+// ---------------------------------------------------------------------------
+// NFC Modal
+// ---------------------------------------------------------------------------
+
+function NfcModal({
+  phase,
+  onClose,
+}: {
+  phase: NfcPhase;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Quét CCCD qua NFC"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.92 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.92 }}
+        transition={{ duration: 0.2 }}
+        className="w-80 rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-6 shadow-2xl"
+      >
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="relative">
+            {/* Outer pulse ring */}
+            {phase === "reading" && (
+              <motion.div
+                className="absolute inset-0 rounded-full border-2 border-[var(--accent-primary)]"
+                animate={{ scale: [1, 1.5, 1], opacity: [0.8, 0, 0.8] }}
+                transition={{ duration: 1.4, repeat: Infinity }}
+              />
+            )}
+            <div
+              className={`flex h-16 w-16 items-center justify-center rounded-full ${
+                phase === "done"
+                  ? "bg-[var(--accent-success)]/10"
+                  : "bg-[var(--accent-primary)]/10"
+              }`}
+            >
+              {phase === "done" ? (
+                <CheckCircle className="h-8 w-8 text-[var(--accent-success)]" />
+              ) : (
+                <Nfc
+                  className={`h-8 w-8 ${
+                    phase === "reading"
+                      ? "animate-pulse text-[var(--accent-primary)]"
+                      : "text-[var(--text-muted)]"
+                  }`}
+                />
+              )}
+            </div>
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold text-[var(--text-primary)]">
+              {phase === "reading" && "Vui lòng áp CCCD lên đầu đọc NFC..."}
+              {phase === "decoding" && "Đọc thành công — đang giải mã..."}
+              {phase === "done" && "Đã đọc thông tin CCCD!"}
+            </p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              {phase === "reading" &&
+                "Giữ yên thẻ cho đến khi hoàn tất"}
+              {phase === "decoding" && "Đang xác minh chữ ký số BAC/EAC..."}
+              {phase === "done" && "Thông tin đã được điền vào biểu mẫu"}
+            </p>
+          </div>
+
+          {(phase === "reading" || phase === "decoding") && (
+            <Loader2 className="h-5 w-5 animate-spin text-[var(--accent-primary)]" />
+          )}
+
+          {phase === "done" && (
+            <button
+              onClick={onClose}
+              className="rounded-md bg-[var(--accent-primary)] px-4 py-1.5 text-sm font-medium text-white hover:opacity-90"
+            >
+              Xác nhận
+            </button>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Print Receipt Dialog
+// ---------------------------------------------------------------------------
+
+function PrintReceiptDialog({
+  caseCode,
+  slaDate,
+  onClose,
+}: {
+  caseCode: string;
+  slaDate: string;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Biên nhận hồ sơ"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 12 }}
+        className="w-[480px] rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-surface)] shadow-2xl"
+      >
+        {/* Receipt preview */}
+        <div className="border-b border-[var(--border-subtle)] p-5">
+          <div className="text-center">
+            <p className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+              CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
+            </p>
+            <p className="text-[10px] text-[var(--text-muted)]">
+              Độc lập – Tự do – Hạnh phúc
+            </p>
+            <p className="mt-3 text-base font-bold text-[var(--text-primary)]">
+              BIÊN NHẬN HỒ SƠ
+            </p>
+            <p className="text-xs text-[var(--text-muted)]">
+              (Theo NĐ 61/2018/NĐ-CP)
+            </p>
+          </div>
+
+          <div className="mt-4 space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Mã hồ sơ</span>
+              <span className="font-mono font-semibold text-[var(--text-primary)]">
+                {caseCode}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Ngày nộp</span>
+              <span className="text-[var(--text-primary)]">
+                {new Intl.DateTimeFormat("vi-VN", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                }).format(new Date())}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Dự kiến trả kết quả</span>
+              <span className="font-medium text-[var(--accent-success)]">
+                {slaDate}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Cơ quan xử lý</span>
+              <span className="text-[var(--text-primary)]">Sở Xây dựng Hà Nội</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-[var(--text-muted)]">Căn cứ pháp lý</span>
+              <span className="text-right text-xs text-[var(--text-secondary)]">
+                NĐ 15/2021/NĐ-CP Điều 95
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-between p-4">
+          <button
+            onClick={onClose}
+            className="rounded-md border border-[var(--border-default)] px-4 py-1.5 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-surface-raised)]"
+          >
+            Đóng
+          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(caseCode);
+                toast.success("Đã sao chép mã hồ sơ");
+              }}
+              className="rounded-md border border-[var(--border-default)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-surface-raised)]"
+            >
+              Sao chép mã
+            </button>
+            <button
+              onClick={() => {
+                toast.info("Đang xuất PDF biên nhận...");
+                onClose();
+              }}
+              className="flex items-center gap-1.5 rounded-md bg-[var(--accent-primary)] px-3 py-1.5 text-sm font-medium text-white hover:opacity-90"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              In biên nhận
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TTHC Confidence Bars
+// ---------------------------------------------------------------------------
+
+function TthcConfidenceBars({
+  suggestions,
+  onSelect,
+}: {
+  suggestions: TthcConfidence[];
+  onSelect: (code: string, name: string) => void;
+}) {
+  return (
+    <div className="mt-3 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3">
+      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+        AI gợi ý thủ tục — bấm để chọn
+      </p>
+      <div className="space-y-2">
+        {suggestions.map((s) => (
+          <button
+            key={s.code}
+            onClick={() => onSelect(s.code, s.name)}
+            className="group w-full rounded-md p-2 text-left transition-colors hover:bg-[var(--bg-surface-raised)]"
+            title={`Chọn ${s.name}`}
+          >
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium text-[var(--text-primary)] group-hover:text-[var(--accent-primary)]">
+                {s.name}
+              </span>
+              <span className="font-mono text-[var(--text-muted)]">
+                {s.pct}%
+              </span>
+            </div>
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-[var(--bg-surface-raised)]">
+              <motion.div
+                className="h-full rounded-full"
+                style={{
+                  backgroundColor:
+                    s.pct >= 80
+                      ? "var(--accent-success)"
+                      : s.pct >= 40
+                        ? "var(--accent-warning)"
+                        : "var(--accent-primary)",
+                }}
+                initial={{ width: 0 }}
+                animate={{ width: `${s.pct}%` }}
+                transition={{ duration: 0.6, ease: [0.25, 1, 0.5, 1], delay: 0.1 }}
+              />
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main Page
+// ---------------------------------------------------------------------------
+
 export default function IntakeUI() {
   const router = useRouter();
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -49,6 +351,12 @@ export default function IntakeUI() {
   const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
   const [activeCaseCode, setActiveCaseCode] = useState<string | null>(null);
   const [ocrPanels, setOcrPanels] = useState<OcrPanel[]>([]);
+  const [showTthcSuggestions, setShowTthcSuggestions] = useState(false);
+  const [nfcPhase, setNfcPhase] = useState<NfcPhase>("idle");
+  const [showNfcModal, setShowNfcModal] = useState(false);
+  const [showReceiptDialog, setShowReceiptDialog] = useState(false);
+  const nfcTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
   const [form, setForm] = useState({
     applicant_name: "",
     applicant_id_number: "",
@@ -57,8 +365,11 @@ export default function IntakeUI() {
     department_id: "DEPT-QLDT",
     notes: "",
   });
+  const [classifyConfidence, setClassifyConfidence] = useState<TthcConfidence[]>([]);
+  const [isLoadingDemo, setIsLoadingDemo] = useState(false);
 
   const { data: tthcResults } = useSearchTTHC(tthcQuery);
+  const { data: publicStats } = usePublicStats();
   const createCase = useCreateCase();
 
   // Poll agent trace when we have an active case
@@ -76,22 +387,145 @@ export default function IntakeUI() {
   })();
 
   // Check if pipeline is done
-  if (
-    trace?.status === "completed" &&
-    phase === "processing"
-  ) {
+  if (trace?.status === "completed" && phase === "processing") {
     setPhase("done");
     toast.success("Pipeline hoàn thành!");
   }
 
-  const onDrop = useCallback((accepted: File[]) => {
+  // When doc_analyzer / intake steps complete, extract text from their `action`
+  // field (AgentStepResponse has no output_summary). Best-effort parse of the
+  // action string for doc/entity info; fall back to raw action text.
+  React.useEffect(() => {
+    if (!trace?.steps || ocrPanels.length === 0) return;
+    const relevant = trace.steps.filter(
+      (s) =>
+        (s.agent_name === "doc_analyze_agent" ||
+          s.agent_name === "intake_agent") &&
+        s.status === "completed",
+    );
+    if (relevant.length === 0) return;
+
+    setOcrPanels((prev) => {
+      let changed = false;
+      const updated = prev.map((panel) => {
+        if (panel.ready) return panel;
+        for (const step of relevant) {
+          const out = stepText(step);
+          if (out.includes(panel.filename) || out.includes(panel.docId)) {
+            changed = true;
+            return { ...panel, ready: true, text: out.slice(0, 400) };
+          }
+        }
+        // After any relevant step finished, mark pending panels ready
+        if (relevant.length > 0 && !panel.ready) {
+          changed = true;
+          return {
+            ...panel,
+            ready: true,
+            text: stepText(relevant[0]).slice(0, 400) || "Đã xử lý xong",
+          };
+        }
+        return panel;
+      });
+      return changed ? updated : prev;
+    });
+  }, [trace, ocrPanels.length]);
+
+  // ---------------------------------------------------------------------------
+  // NFC CCCD scan
+  // ---------------------------------------------------------------------------
+  function startNfcScan() {
+    setNfcPhase("reading");
+    setShowNfcModal(true);
+
+    const t1 = setTimeout(() => {
+      setNfcPhase("decoding");
+    }, 2000);
+
+    const t2 = setTimeout(() => {
+      setNfcPhase("done");
+      // Auto-fill form from NFC fixture (demo mode)
+      setForm((f) => ({
+        ...f,
+        applicant_name: (nfcFixture as Record<string, string>).applicant_name ?? "Nguyễn Văn A",
+        applicant_id_number: (nfcFixture as Record<string, string>).applicant_id_number ?? "024097012345",
+        applicant_phone: (nfcFixture as Record<string, string>).applicant_phone ?? "0901234567",
+        applicant_address: (nfcFixture as Record<string, string>).applicant_address ?? "123 Đường Láng, Đống Đa, Hà Nội",
+      }));
+    }, 3100);
+
+    nfcTimers.current = [t1, t2];
+  }
+
+  function closeNfcModal() {
+    nfcTimers.current.forEach(clearTimeout);
+    setShowNfcModal(false);
+    if (nfcPhase === "done") {
+      toast.success("Đã điền thông tin từ CCCD");
+    }
+    setNfcPhase("idle");
+  }
+
+  // ---------------------------------------------------------------------------
+  // File drop
+  // ---------------------------------------------------------------------------
+  const onDrop = useCallback((accepted: File[]) => { void (async () => {
     const newFiles = accepted.map((f) => ({
       file: f,
       id: crypto.randomUUID(),
       status: "pending" as const,
     }));
     setFiles((prev) => [...prev, ...newFiles]);
-  }, []);
+    setShowTthcSuggestions(true);
+
+    // Try to call the classify endpoint to get real confidence scores
+    try {
+      const firstFile = accepted[0];
+      if (!firstFile) return;
+      const formData = new FormData();
+      formData.append("file", firstFile);
+      const res = await fetch("/api/agents/classify", {
+        method: "POST",
+        body: formData,
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("govflow-token") ?? ""}`,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json() as {
+          confidence?: Array<{ code: string; name: string; pct?: number; score?: number }>;
+          alternatives?: Array<{ code: string; name: string; pct?: number; score?: number }>;
+          tthc_code?: string;
+          tthc_name?: string;
+        };
+        const rawList = data.confidence ?? data.alternatives ?? [];
+        if (rawList.length > 0) {
+          setClassifyConfidence(
+            rawList.map((r) => ({
+              code: r.code,
+              name: r.name,
+              pct: Math.round((r.pct ?? r.score ?? 0) * (r.pct && r.pct <= 1 ? 100 : 1)),
+            })),
+          );
+          return;
+        }
+        // Single top result
+        if (data.tthc_code && data.tthc_name) {
+          setClassifyConfidence([{ code: data.tthc_code, name: data.tthc_name, pct: 94 }]);
+          return;
+        }
+      }
+    } catch {
+      // Classify endpoint not available — fall through to default suggestions
+    }
+
+    // Fallback: static suggestions when API is unavailable
+    setClassifyConfidence([
+      { code: "1.004415", name: "Cấp phép xây dựng (GPXD)", pct: 94 },
+      { code: "1.000046", name: "GCN quyền sử dụng đất", pct: 3 },
+      { code: "1.001757", name: "Đăng ký kinh doanh", pct: 2 },
+    ]);
+  })(); }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -104,8 +538,63 @@ export default function IntakeUI() {
 
   const removeFile = (id: string) => {
     setFiles((prev) => prev.filter((f) => f.id !== id));
+    if (files.length <= 1) setShowTthcSuggestions(false);
   };
 
+  // ---------------------------------------------------------------------------
+  // Demo quick-fill
+  // ---------------------------------------------------------------------------
+  async function handleLoadDemoSample() {
+    setIsLoadingDemo(true);
+    try {
+      // Try public demo-samples endpoint first (pattern from submit-wizard)
+      const sample = await apiClient.get<{
+        tthc_code?: string;
+        tthc_name?: string;
+        applicant_name?: string;
+        applicant_id_number?: string;
+        applicant_phone?: string;
+        applicant_address?: string;
+        notes?: string;
+      }>("/api/public/demo-samples/1.004415");
+
+      setSelectedTTHC(sample.tthc_code ?? "1.004415");
+      setTthcQuery(sample.tthc_name ?? "Cấp phép xây dựng (GPXD)");
+      setForm((f) => ({
+        ...f,
+        applicant_name: sample.applicant_name ?? "Nguyễn Văn Bình",
+        applicant_id_number: sample.applicant_id_number ?? "001085012345",
+        applicant_phone: sample.applicant_phone ?? "0912345678",
+        applicant_address:
+          sample.applicant_address ??
+          "Số 18 Nguyễn Trãi, Phường Thượng Đình, Quận Thanh Xuân, Hà Nội",
+        notes: sample.notes ?? "Hồ sơ xin cấp phép xây dựng nhà ở riêng lẻ",
+        department_id: "DEPT-QLDT",
+      }));
+      toast.success("Đã điền dữ liệu mẫu");
+    } catch {
+      // Fallback inline fixture when endpoint unavailable
+      setSelectedTTHC("1.004415");
+      setTthcQuery("Cấp phép xây dựng (GPXD)");
+      setForm((f) => ({
+        ...f,
+        applicant_name: "Nguyễn Văn Bình",
+        applicant_id_number: "001085012345",
+        applicant_phone: "0912345678",
+        applicant_address:
+          "Số 18 Nguyễn Trãi, Phường Thượng Đình, Quận Thanh Xuân, Hà Nội",
+        notes: "Hồ sơ xin cấp phép xây dựng nhà ở riêng lẻ",
+        department_id: "DEPT-QLDT",
+      }));
+      toast.success("Đã điền dữ liệu mẫu");
+    } finally {
+      setIsLoadingDemo(false);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Submit
+  // ---------------------------------------------------------------------------
   async function handleSubmit() {
     if (!selectedTTHC || !form.applicant_name || !form.applicant_id_number) {
       toast.error("Vui lòng điền đầy đủ thông tin bắt buộc");
@@ -115,7 +604,6 @@ export default function IntakeUI() {
     setPhase("uploading");
 
     try {
-      // Step 1: Create case
       const caseRes = await createCase.mutateAsync({
         tthc_code: selectedTTHC,
         department_id: form.department_id,
@@ -129,7 +617,6 @@ export default function IntakeUI() {
       setActiveCaseId(caseRes.case_id);
       setActiveCaseCode(caseRes.code);
 
-      // Step 2: Create bundle + upload files
       if (files.length > 0) {
         const bundleBody: BundleCreate = {
           files: files.map((f) => ({
@@ -144,7 +631,6 @@ export default function IntakeUI() {
           bundleBody,
         );
 
-        // Set up OCR panels
         setOcrPanels(
           bundleRes.upload_urls.map((u) => ({
             docId: u.oss_key.split("/").pop() || u.filename,
@@ -155,7 +641,6 @@ export default function IntakeUI() {
           })),
         );
 
-        // Upload files to presigned URLs
         for (const uploadUrl of bundleRes.upload_urls) {
           const fileToUpload = files.find(
             (f) => f.file.name === uploadUrl.filename,
@@ -163,9 +648,7 @@ export default function IntakeUI() {
           if (fileToUpload) {
             setFiles((prev) =>
               prev.map((f) =>
-                f.id === fileToUpload.id
-                  ? { ...f, status: "uploading" }
-                  : f,
+                f.id === fileToUpload.id ? { ...f, status: "uploading" } : f,
               ),
             );
             try {
@@ -182,9 +665,7 @@ export default function IntakeUI() {
             } catch {
               setFiles((prev) =>
                 prev.map((f) =>
-                  f.id === fileToUpload.id
-                    ? { ...f, status: "error" }
-                    : f,
+                  f.id === fileToUpload.id ? { ...f, status: "error" } : f,
                 ),
               );
             }
@@ -192,10 +673,8 @@ export default function IntakeUI() {
         }
       }
 
-      // Step 3: Finalize case
       await apiClient.post(`/api/cases/${caseRes.case_id}/finalize`);
 
-      // Step 4: Trigger agent pipeline
       setPhase("processing");
       await apiClient.post<unknown>(
         `/api/agents/run/${caseRes.case_id}`,
@@ -212,9 +691,79 @@ export default function IntakeUI() {
 
   const isProcessing = phase === "uploading" || phase === "processing";
 
+  // SLA date string: today + 10 working days (approx)
+  const slaDate = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 14);
+    return `trước 17:00 ngày ${new Intl.DateTimeFormat("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(d)}`;
+  })();
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Tiếp nhận hồ sơ</h1>
+      {/* NFC modal */}
+      <AnimatePresence>
+        {showNfcModal && (
+          <NfcModal phase={nfcPhase} onClose={closeNfcModal} />
+        )}
+      </AnimatePresence>
+
+      {/* Print receipt dialog */}
+      <AnimatePresence>
+        {showReceiptDialog && activeCaseCode && (
+          <PrintReceiptDialog
+            caseCode={activeCaseCode}
+            slaDate={slaDate}
+            onClose={() => setShowReceiptDialog(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Page header */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Tiếp nhận hồ sơ</h1>
+        <div className="flex items-center gap-2">
+          {/* Queue counter */}
+          <div className="flex items-center gap-1.5 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-1.5">
+            <Users className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+            <span className="text-xs text-[var(--text-muted)]">
+              {publicStats
+                ? `${publicStats.cases_this_month} hồ sơ đang chờ`
+                : "— hồ sơ đang chờ"}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleLoadDemoSample()}
+            disabled={isLoadingDemo || phase !== "idle"}
+            className="flex items-center gap-1.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-surface-raised)] disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Nạp hồ sơ mẫu (chế độ demo)"
+            title="Điền thông tin hồ sơ CPXD mẫu để demo nhanh"
+          >
+            {isLoadingDemo ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+            Nạp hồ sơ mẫu
+          </button>
+          <button
+            type="button"
+            onClick={() => router.push("/trace/CASE-2026-0001")}
+            className="flex items-center gap-1.5 rounded-md border border-purple-300 bg-gradient-to-r from-purple-50 to-violet-50 px-3 py-1.5 text-xs font-medium text-purple-700 hover:opacity-90 dark:border-purple-700 dark:from-purple-950 dark:to-violet-950 dark:text-purple-200"
+            title="Mở hồ sơ CPXD mẫu đã có trace + gap + citation"
+          >
+            Xem case mẫu →
+          </button>
+          <OnboardingTour tourId="officer-inbox" showButton={true} />
+        </div>
+      </div>
 
       {/* Status banners */}
       <AnimatePresence mode="wait">
@@ -258,19 +807,31 @@ export default function IntakeUI() {
                 </p>
               </div>
             </div>
-            <button
-              onClick={() => router.push(`/trace/${activeCaseId}`)}
-              className="flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-3 py-1.5 text-sm font-medium text-white"
-            >
-              Xem Trace <ArrowRight className="h-3 w-3" />
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowReceiptDialog(true)}
+                className="flex items-center gap-1 rounded-md border border-[var(--border-default)] px-3 py-1.5 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-surface-raised)]"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                In biên nhận
+              </button>
+              <button
+                onClick={() => router.push(`/trace/${activeCaseId}`)}
+                className="flex items-center gap-1 rounded-md bg-[var(--accent-primary)] px-3 py-1.5 text-sm font-medium text-white"
+              >
+                Xem Trace <ArrowRight className="h-3 w-3" />
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Compliance score bar - show during/after processing */}
+      {/* Compliance score bar */}
       {(phase === "processing" || phase === "done") && trace && (
-        <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
+        <div
+          className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4"
+          data-tour="intake-pipeline"
+        >
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold">Tiến trình xử lý</h3>
             <span className="text-lg font-bold">
@@ -299,7 +860,6 @@ export default function IntakeUI() {
               }}
             />
           </div>
-          {/* Agent steps */}
           <div className="mt-3 space-y-1">
             {trace.steps.map((step) => (
               <div
@@ -333,7 +893,13 @@ export default function IntakeUI() {
       )}
 
       {/* Drag-drop upload zone */}
+      <HelpHintBanner id="intake-upload" variant="tip">
+        Kéo thả file PDF/JPG vào đây.{" "}
+        <strong>Qwen3-VL</strong> sẽ tự động OCR và trích xuất thông tin hồ
+        sơ.
+      </HelpHintBanner>
       <div
+        data-tour="intake-upload"
         {...getRootProps()}
         className={`cursor-pointer rounded-lg border-2 border-dashed p-8 text-center transition-colors ${
           phase !== "idle"
@@ -343,8 +909,8 @@ export default function IntakeUI() {
               : "border-[var(--border-default)] hover:border-[var(--accent-primary)]/50"
         }`}
       >
-        <input {...getInputProps()} />
-        <Upload className="mx-auto h-8 w-8 text-[var(--text-muted)]" />
+        <input {...getInputProps()} aria-label="Tải lên tài liệu (PDF, JPG, PNG)" />
+        <Upload className="mx-auto h-8 w-8 text-[var(--text-muted)]" aria-hidden="true" />
         <p className="mt-2 text-sm text-[var(--text-secondary)]">
           {isDragActive
             ? "Thả tài liệu vào đây..."
@@ -389,6 +955,7 @@ export default function IntakeUI() {
                   <button
                     onClick={() => removeFile(f.id)}
                     className="rounded p-1 hover:bg-[var(--bg-surface-raised)]"
+                    aria-label={`Xóa file ${f.file.name}`}
                   >
                     <X className="h-3 w-3 text-[var(--text-muted)]" />
                   </button>
@@ -449,7 +1016,11 @@ export default function IntakeUI() {
                   setSelectedTTHC(t.tthc_code);
                   setTthcQuery(t.name);
                 }}
-                className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--bg-surface-raised)] ${selectedTTHC === t.tthc_code ? "bg-[var(--accent-primary)]/10" : ""}`}
+                className={`w-full rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--bg-surface-raised)] ${
+                  selectedTTHC === t.tthc_code
+                    ? "bg-[var(--accent-primary)]/10"
+                    : ""
+                }`}
               >
                 <span className="font-mono text-xs text-[var(--text-muted)]">
                   {t.tthc_code}
@@ -467,106 +1038,151 @@ export default function IntakeUI() {
             Đã chọn: {selectedTTHC}
           </p>
         )}
+
+        {/* AI classifier confidence bars — shown after file upload */}
+        <AnimatePresence>
+          {showTthcSuggestions && !selectedTTHC && classifyConfidence.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.25 }}
+            >
+              <TthcConfidenceBars
+                suggestions={classifyConfidence}
+                onSelect={(code, name) => {
+                  setSelectedTTHC(code);
+                  setTthcQuery(name);
+                  setShowTthcSuggestions(false);
+                }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Applicant form */}
-      <div className="grid grid-cols-1 gap-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4 md:grid-cols-2">
-        <div>
-          <label htmlFor="name" className="text-sm font-medium">
-            Họ và tên *
-          </label>
-          <input
-            id="name"
-            value={form.applicant_name}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, applicant_name: e.target.value }))
-            }
+      <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
+        {/* Section header with NFC button */}
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-sm font-semibold">Thông tin người nộp hồ sơ</h2>
+          <button
+            type="button"
+            onClick={startNfcScan}
             disabled={isProcessing}
-            className="mt-1 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-app)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
-          />
+            title="Chức năng demo: mô phỏng quét CCCD qua NFC để tự điền thông tin vào biểu mẫu. Trong môi trường thực tế, thiết bị đọc NFC phần cứng sẽ được dùng."
+            className="flex items-center gap-1.5 rounded-md border border-amber-400/50 bg-amber-50/80 px-3 py-1.5 text-xs font-medium text-amber-700 transition-colors hover:bg-amber-100 disabled:opacity-50 dark:bg-amber-900/20 dark:text-amber-300"
+            aria-label="Mô phỏng quét CCCD qua NFC (chế độ demo)"
+          >
+            <Nfc className="h-3.5 w-3.5" />
+            Mô phỏng quét NFC (demo)
+          </button>
         </div>
-        <div>
-          <label htmlFor="cccd" className="text-sm font-medium">
-            Số CCCD *
-          </label>
-          <input
-            id="cccd"
-            value={form.applicant_id_number}
-            onChange={(e) =>
-              setForm((f) => ({
-                ...f,
-                applicant_id_number: e.target.value,
-              }))
-            }
-            disabled={isProcessing}
-            className="mt-1 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-app)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
-          />
-        </div>
-        <div>
-          <label htmlFor="phone" className="text-sm font-medium">
-            Số điện thoại
-          </label>
-          <input
-            id="phone"
-            value={form.applicant_phone}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, applicant_phone: e.target.value }))
-            }
-            disabled={isProcessing}
-            className="mt-1 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-app)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
-          />
-        </div>
-        <div>
-          <label htmlFor="address" className="text-sm font-medium">
-            Địa chỉ
-          </label>
-          <input
-            id="address"
-            value={form.applicant_address}
-            onChange={(e) =>
-              setForm((f) => ({
-                ...f,
-                applicant_address: e.target.value,
-              }))
-            }
-            disabled={isProcessing}
-            className="mt-1 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-app)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
-          />
-        </div>
-        <div className="md:col-span-2">
-          <label htmlFor="notes" className="text-sm font-medium">
-            Ghi chú
-          </label>
-          <textarea
-            id="notes"
-            value={form.notes}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, notes: e.target.value }))
-            }
-            rows={3}
-            disabled={isProcessing}
-            className="mt-1 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-app)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
-          />
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label htmlFor="name" className="text-sm font-medium">
+              Họ và tên *
+            </label>
+            <input
+              id="name"
+              value={form.applicant_name}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, applicant_name: e.target.value }))
+              }
+              disabled={isProcessing}
+              className="mt-1 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-app)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
+            />
+          </div>
+          <div>
+            <label htmlFor="cccd" className="text-sm font-medium">
+              Số CCCD *
+            </label>
+            <input
+              id="cccd"
+              value={form.applicant_id_number}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  applicant_id_number: e.target.value,
+                }))
+              }
+              disabled={isProcessing}
+              className="mt-1 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-app)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
+            />
+          </div>
+          <div>
+            <label htmlFor="phone" className="text-sm font-medium">
+              Số điện thoại
+            </label>
+            <input
+              id="phone"
+              value={form.applicant_phone}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, applicant_phone: e.target.value }))
+              }
+              disabled={isProcessing}
+              className="mt-1 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-app)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
+            />
+          </div>
+          <div>
+            <label htmlFor="address" className="text-sm font-medium">
+              Địa chỉ
+            </label>
+            <input
+              id="address"
+              value={form.applicant_address}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  applicant_address: e.target.value,
+                }))
+              }
+              disabled={isProcessing}
+              className="mt-1 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-app)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label htmlFor="notes" className="text-sm font-medium">
+              Ghi chú
+            </label>
+            <textarea
+              id="notes"
+              value={form.notes}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, notes: e.target.value }))
+              }
+              rows={3}
+              disabled={isProcessing}
+              className="mt-1 w-full rounded-md border border-[var(--border-default)] bg-[var(--bg-app)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-primary)] disabled:opacity-50"
+            />
+          </div>
         </div>
       </div>
 
       {/* Submit / Navigate button */}
       {phase === "done" ? (
-        <button
-          onClick={() => router.push(`/trace/${activeCaseId}`)}
-          className="flex w-full items-center justify-center gap-2 rounded-md bg-[var(--accent-primary)] py-3 font-medium text-white transition-opacity hover:opacity-90"
-        >
-          Xem tiến trình xử lý <ArrowRight className="h-4 w-4" />
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={() => setShowReceiptDialog(true)}
+            className="flex flex-1 items-center justify-center gap-2 rounded-md border border-[var(--border-default)] py-3 font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-surface-raised)]"
+          >
+            <Printer className="h-4 w-4" /> In biên nhận
+          </button>
+          <button
+            onClick={() => router.push(`/trace/${activeCaseId}`)}
+            className="flex flex-[2] items-center justify-center gap-2 rounded-md bg-[var(--accent-primary)] py-3 font-medium text-white transition-opacity hover:opacity-90"
+          >
+            Xem tiến trình xử lý <ArrowRight className="h-4 w-4" />
+          </button>
+        </div>
       ) : (
         <button
           onClick={handleSubmit}
           disabled={isProcessing || createCase.isPending}
           className="w-full rounded-md bg-[var(--accent-primary)] py-3 font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
         >
-          {isProcessing
-            ? "Đang xử lý..."
-            : "Tạo hồ sơ & khởi chạy pipeline"}
+          {isProcessing ? "Đang xử lý..." : "Tạo hồ sơ & khởi chạy pipeline"}
         </button>
       )}
     </div>

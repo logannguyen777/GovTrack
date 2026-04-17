@@ -1,12 +1,15 @@
 # Import all agent implementations to trigger register_agent() calls
-from . import intake  # noqa: F401
-from . import planner  # noqa: F401
-from . import doc_analyzer  # noqa: F401
-from . import classifier  # noqa: F401
-from . import compliance  # noqa: F401
-from . import legal_lookup  # noqa: F401
-from . import router  # noqa: F401
-from . import consult  # noqa: F401
-from . import summarizer  # noqa: F401
-from . import drafter  # noqa: F401
-from . import security_officer  # noqa: F401
+from . import (
+    classifier,  # noqa: F401
+    compliance,  # noqa: F401
+    consult,  # noqa: F401
+    dispatch_router,  # noqa: F401
+    doc_analyzer,  # noqa: F401
+    drafter,  # noqa: F401
+    intake,  # noqa: F401
+    legal_lookup,  # noqa: F401
+    planner,  # noqa: F401
+    router,  # noqa: F401
+    security_officer,  # noqa: F401
+    summarizer,  # noqa: F401
+)

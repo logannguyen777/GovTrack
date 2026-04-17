@@ -13,11 +13,15 @@ import uuid
 from collections import deque
 from typing import Any
 
-from ...database import async_gremlin_submit
+# async_gremlin_submit replaced by self._get_gdb().execute() per task 1.1
 from ..base import AgentResult, BaseAgent
 from ..orchestrator import register_agent
 
 logger = logging.getLogger("govflow.agent.planner")
+
+
+class PlannerInvalidDAG(ValueError):
+    """Raised when the LLM-generated task DAG contains invalid dependencies or cycles."""
 
 
 class PlannerAgent(BaseAgent):
@@ -132,14 +136,14 @@ class PlannerAgent(BaseAgent):
 
         try:
             # Step 1: Fetch case metadata
-            case_data = await async_gremlin_submit(
+            case_data = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid).valueMap(true)",
                 {"cid": case_id},
             )
             self._case_meta = case_data[0] if case_data else {}
 
             # Step 2: Fetch documents
-            self._documents = await async_gremlin_submit(
+            self._documents = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid)"
                 ".out('HAS_BUNDLE').out('CONTAINS').hasLabel('Document')"
                 ".valueMap(true)",
@@ -150,7 +154,7 @@ class PlannerAgent(BaseAgent):
             tthc_code = self._extract_prop(self._case_meta, "tthc_code")
             self._tthc_spec = {}
             if tthc_code:
-                specs = await async_gremlin_submit(
+                specs = await self._get_gdb().execute(
                     "g.V().has('TTHCSpec', 'code', code).valueMap(true)",
                     {"code": tthc_code},
                 )
@@ -183,13 +187,15 @@ class PlannerAgent(BaseAgent):
                     f"using default plan for category={category}"
                 )
 
-            # Step 7: Cycle detection
-            if self._detect_cycles(plan.get("tasks", [])):
+            # Step 7: Cycle/closure detection — fall back to default on any DAG error
+            try:
+                self._detect_cycles(plan.get("tasks", []))
+            except PlannerInvalidDAG as dag_err:
                 category = self._guess_category(self._case_meta, self._tthc_spec)
                 plan["tasks"] = self.DEFAULT_PLANS.get(category, self.DEFAULT_PLANS["_default"])
                 plan["fallback_used"] = True
                 fallback_used = True
-                logger.warning("[Planner] Cycle detected in DAG, using default plan")
+                logger.warning(f"[Planner] Invalid DAG: {dag_err}. Using default plan.")
 
             # Step 8: Apply sensitive keyword escalation
             plan = self._apply_sensitivity_escalation(plan, case_id)
@@ -200,7 +206,7 @@ class PlannerAgent(BaseAgent):
 
             for t in tasks:
                 task_id = f"{case_id}:{t['name']}"
-                await async_gremlin_submit(
+                await self._get_gdb().execute(
                     "g.addV('Task')"
                     ".property('task_id', tid).property('name', name)"
                     ".property('agent_name', agent).property('case_id', cid)"
@@ -221,10 +227,10 @@ class PlannerAgent(BaseAgent):
             for t in tasks:
                 for dep_name in t.get("depends_on", []):
                     if dep_name in task_ids:
-                        await async_gremlin_submit(
+                        await self._get_gdb().execute(
                             "g.V().has('Task', 'task_id', downstream)"
                             ".addE('DEPENDS_ON')"
-                            ".to(g.V().has('Task', 'task_id', upstream))",
+                            ".to(__.V().has('Task', 'task_id', upstream))",
                             {
                                 "downstream": task_ids[t["name"]],
                                 "upstream": task_ids[dep_name],
@@ -362,14 +368,44 @@ class PlannerAgent(BaseAgent):
         plan["tasks"] = valid_tasks
         return plan
 
-    @staticmethod
-    def _detect_cycles(tasks: list[dict]) -> bool:
-        """Detect cycles in the task DAG using Kahn's algorithm. Returns True if cycle exists."""
+    @classmethod
+    def _detect_cycles(cls, tasks: list[dict]) -> bool:
+        """
+        Detect cycles in the task DAG using Kahn's algorithm.
+
+        Also validates closure: every ``depends_on`` entry must refer to a
+        task that exists in *both* ``KNOWN_TASK_NAMES`` **and** the current
+        plan's own task list.  Unknown references raise ``PlannerInvalidDAG``.
+
+        Raises:
+            PlannerInvalidDAG: if an unknown dependency is found, or if a
+                cycle is present (unreachable tasks after Kahn).
+
+        Returns:
+            True  – never (raises instead); kept as bool for legacy callers
+                    that check the return value.
+            False – DAG is valid (no cycles, closure satisfied).
+        """
         if not tasks:
             return False
 
-        # Build adjacency list and in-degree map
         task_names = {t["name"] for t in tasks}
+
+        # ── Closure check ────────────────────────────────────────
+        for t in tasks:
+            for dep in t.get("depends_on", []):
+                if dep not in cls.KNOWN_TASK_NAMES:
+                    raise PlannerInvalidDAG(
+                        f"Task '{t['name']}' depends on unknown task '{dep}' "
+                        f"(not in KNOWN_TASK_NAMES)"
+                    )
+                if dep not in task_names:
+                    raise PlannerInvalidDAG(
+                        f"Task '{t['name']}' depends on '{dep}' "
+                        f"which is not present in this plan's task list"
+                    )
+
+        # ── Kahn's BFS cycle detection ───────────────────────────
         in_degree: dict[str, int] = {t["name"]: 0 for t in tasks}
         adjacency: dict[str, list[str]] = {t["name"]: [] for t in tasks}
 
@@ -379,7 +415,6 @@ class PlannerAgent(BaseAgent):
                     adjacency[dep].append(t["name"])
                     in_degree[t["name"]] += 1
 
-        # BFS with zero in-degree nodes
         queue = deque([name for name, deg in in_degree.items() if deg == 0])
         visited_count = 0
 
@@ -391,7 +426,13 @@ class PlannerAgent(BaseAgent):
                 if in_degree[neighbor] == 0:
                     queue.append(neighbor)
 
-        return visited_count != len(task_names)
+        if visited_count != len(task_names):
+            unvisited = [n for n in task_names if in_degree.get(n, 0) > 0]
+            raise PlannerInvalidDAG(
+                f"Cycle detected: unvisited tasks {unvisited}"
+            )
+
+        return False  # DAG is valid
 
     def _guess_category(self, case_meta: dict, tthc_spec: dict) -> str:
         """Determine category for DEFAULT_PLANS fallback selection."""

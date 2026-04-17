@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useCases } from "@/hooks/use-cases";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ClassificationBadge } from "@/components/ui/classification-badge";
 import { useRouter } from "next/navigation";
+import { apiClient } from "@/lib/api";
 import {
   AlertTriangle,
   FolderOpen,
@@ -11,8 +13,9 @@ import {
   RefreshCw,
   Info,
   ChevronRight,
+  Loader2,
 } from "lucide-react";
-import type { CaseResponse } from "@/lib/types";
+import type { CaseResponse, DocumentResponse } from "@/lib/types";
 
 const STATUS_LABEL: Record<string, string> = {
   submitted: "Đã nộp",
@@ -69,6 +72,31 @@ export default function DocumentsPage() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("all");
+  const [navigatingId, setNavigatingId] = useState<string | null>(null);
+
+  /** Navigate to the first document of a case. Falls back to /trace if no documents. */
+  const handleRowClick = useCallback(
+    async (c: CaseResponse) => {
+      setNavigatingId(c.case_id);
+      try {
+        const docs = await apiClient.get<DocumentResponse[]>(
+          `/api/cases/${c.case_id}/documents`,
+        );
+        if (docs && docs.length > 0) {
+          router.push(`/documents/${docs[0].doc_id}`);
+        } else {
+          // No documents yet — fall through to trace
+          router.push(`/trace/${c.case_id}`);
+        }
+      } catch {
+        // API error — best effort fallback
+        router.push(`/trace/${c.case_id}`);
+      } finally {
+        setNavigatingId(null);
+      }
+    },
+    [router],
+  );
 
   const allCases: CaseResponse[] = data?.items ?? [];
 
@@ -224,12 +252,13 @@ export default function DocumentsPage() {
               aria-label="Danh sách hồ sơ có tài liệu"
             >
               {/* Table header */}
-              <div className="grid grid-cols-[1fr_1.6fr_1.2fr_1.4fr_auto] items-center gap-4 border-b border-[var(--border-subtle)] px-4 py-2.5">
+              <div className="grid grid-cols-[1fr_1.4fr_1.1fr_1.2fr_auto_auto] items-center gap-4 border-b border-[var(--border-subtle)] px-4 py-2.5">
                 {[
                   "Mã hồ sơ",
                   "Người nộp",
                   "Trạng thái",
                   "Phòng ban",
+                  "Mật",
                   "",
                 ].map((h, i) => (
                   <span
@@ -251,9 +280,10 @@ export default function DocumentsPage() {
                   return (
                     <li key={c.case_id}>
                       <button
-                        onClick={() => router.push(`/trace/${c.case_id}`)}
+                        onClick={() => handleRowClick(c)}
+                        disabled={navigatingId === c.case_id}
                         aria-label={`Xem tài liệu hồ sơ ${c.code} — ${c.applicant_name}`}
-                        className={`grid w-full grid-cols-[1fr_1.6fr_1.2fr_1.4fr_auto] items-center gap-4 px-4 py-4 text-left transition-colors hover:bg-[var(--bg-surface-raised)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-primary)] ${
+                        className={`grid w-full grid-cols-[1fr_1.4fr_1.1fr_1.2fr_auto_auto] items-center gap-4 px-4 py-4 text-left transition-colors hover:bg-[var(--bg-surface-raised)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent-primary)] disabled:opacity-60 ${
                           idx !== filtered.length - 1
                             ? "border-b border-[var(--border-subtle)]"
                             : ""
@@ -287,11 +317,21 @@ export default function DocumentsPage() {
                           {deptName(c.department_id)}
                         </span>
 
-                        {/* Chevron */}
-                        <ChevronRight
-                          className="h-4 w-4 text-[var(--text-muted)]"
-                          aria-hidden="true"
-                        />
+                        {/* Classification badge */}
+                        <ClassificationBadge level="unclassified" />
+
+                        {/* Chevron / spinner */}
+                        {navigatingId === c.case_id ? (
+                          <Loader2
+                            className="h-4 w-4 animate-spin text-[var(--accent-primary)]"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <ChevronRight
+                            className="h-4 w-4 text-[var(--text-muted)]"
+                            aria-hidden="true"
+                          />
+                        )}
                       </button>
                     </li>
                   );

@@ -11,8 +11,12 @@ import {
   User as UserIcon,
 } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
+import { ROLE_LABELS } from "@/lib/roles";
 import { useNotificationStore } from "@/lib/store";
 import { useTheme } from "@/components/providers/theme-provider";
+import { ArtifactToggleButton } from "@/components/agents/artifact-toggle-button";
+import { LiveAgentIndicator } from "@/components/agents/live-agent-indicator";
+import { RoleSwitcher } from "@/components/layout/role-switcher";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,6 +43,7 @@ const ROUTE_LABELS: Record<string, string> = {
   intake:     "Tiếp nhận hồ sơ",
   inbox:      "Hồ sơ đến",
   compliance: "Tuân thủ",
+  consult:    "Xin ý kiến",
   documents:  "Tài liệu",
   trace:      "Theo dõi AI",
   security:   "Bảo mật",
@@ -294,18 +299,6 @@ function ThemeToggle() {
 // User dropdown
 // ---------------------------------------------------------------------------
 
-const ROLE_LABELS: Record<string, string> = {
-  admin:           "Quản trị viên",
-  leader:          "Lãnh đạo",
-  officer:         "Cán bộ",
-  staff_intake:    "Cán bộ tiếp nhận",
-  staff_processor: "Cán bộ xử lý",
-  legal:           "Pháp chế",
-  security:        "An ninh",
-  public_viewer:   "Xem công khai",
-  citizen:         "Công dân",
-};
-
 function UserDropdown() {
   const { user, logout } = useAuth();
 
@@ -443,6 +436,12 @@ export function TopBar({ onCommandOpen }: TopBarProps) {
           </kbd>
         </button>
 
+        {/* Live agent indicator */}
+        <LiveAgentIndicator />
+
+        {/* Artifact panel toggle */}
+        <ArtifactToggleButton />
+
         {/* Notification bell */}
         <NotificationPopover />
 
@@ -452,6 +451,9 @@ export function TopBar({ onCommandOpen }: TopBarProps) {
             DEMO
           </span>
         )}
+
+        {/* Role switcher — judges can one-click swap persona */}
+        <RoleSwitcher />
 
         {/* Theme toggle */}
         <ThemeToggle />

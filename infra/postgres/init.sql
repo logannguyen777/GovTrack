@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS law_chunks (
     chunk_index     INTEGER NOT NULL DEFAULT 0,
     title           TEXT,
     content         TEXT NOT NULL,
-    embedding       vector(1536),
-        -- Qwen3-Embedding v3, 1536 dimensions
+    embedding       vector(1024),
+        -- Qwen3-Embedding v3 (DashScope supports 512 | 768 | 1024 dimensions)
         -- Populated by scripts/embed_chunks.py
     metadata        JSONB DEFAULT '{}',
         -- {effective_date, status, classification, issuing_body, ...}
@@ -173,22 +173,66 @@ CREATE INDEX IF NOT EXISTS idx_templates_code ON templates_nd30 (template_code);
 -- sha256("demo") = 2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea
 -- ============================================================
 INSERT INTO users (username, full_name, email, password_hash, role, clearance_level, departments) VALUES
-    ('admin', 'System Administrator', 'admin@govflow.vn',
+    ('admin', 'Quản Trị Hệ Thống', 'admin@govflow.vn',
      '2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea',
      'admin', 3, '{"DEPT-ADMIN"}'),
-    ('cv_qldt', 'Nguyen Van Chuyen Vien', 'cv_qldt@govflow.vn',
+    ('cv_qldt', 'Nguyễn Văn Chuyên Viên', 'cv_qldt@govflow.vn',
      '2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea',
-     'officer', 1, '{"DEPT-QLDT"}'),
-    ('ld_phong', 'Tran Thi Lanh Dao', 'ld_phong@govflow.vn',
+     'staff_processor', 1, '{"DEPT-QLDT"}'),
+    ('ld_phong', 'Trần Thị Lãnh Đạo', 'ld_phong@govflow.vn',
      '2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea',
      'leader', 2, '{"DEPT-QLDT","DEPT-TNMT"}'),
-    ('staff_intake', 'Le Van Tiep Nhan', 'intake@govflow.vn',
+    ('staff_intake', 'Lê Văn Tiếp Nhận', 'intake@govflow.vn',
      '2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea',
-     'officer', 0, '{"DEPT-TNMT"}'),
-    ('legal_expert', 'Pham Thi Phap Ly', 'legal@govflow.vn',
+     'staff_intake', 0, '{"DEPT-TNMT"}'),
+    ('legal_expert', 'Phạm Thị Pháp Lý', 'legal@govflow.vn',
      '2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea',
-     'officer', 2, '{"DEPT-PHAPCHE"}'),
-    ('security_officer', 'Hoang Van Bao Mat', 'security@govflow.vn',
+     'legal', 2, '{"DEPT-PHAPCHE"}'),
+    ('security_officer', 'Hoàng Văn Bảo Mật', 'security@govflow.vn',
      '2a97516c354b68848cdbd8f54a226a0a55b21ed138e207ad6c5cbb9c00aa5aea',
-     'admin', 3, '{"DEPT-ADMIN","DEPT-ANNINH"}')
+     'security', 3, '{"DEPT-ADMIN","DEPT-ANNINH"}')
 ON CONFLICT (username) DO NOTHING;
+
+-- ============================================================
+-- Assistant chat sessions (citizen-facing chatbot)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS assistant_sessions (
+    id              TEXT PRIMARY KEY,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_message_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ip_hash         TEXT,
+    context         JSONB,    -- { type: "case"|"submit"|"portal", ref?: string }
+    metadata        JSONB
+);
+
+CREATE INDEX IF NOT EXISTS assistant_sessions_last_msg_idx
+    ON assistant_sessions(last_message_at DESC);
+
+CREATE TABLE IF NOT EXISTS assistant_messages (
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL REFERENCES assistant_sessions(id) ON DELETE CASCADE,
+    role        TEXT NOT NULL,       -- user | assistant | tool | system
+    content     TEXT,
+    tool_calls  JSONB,
+    attachments JSONB,
+    citations   JSONB,
+    status      TEXT,                -- pending | streaming | completed | cancelled | error
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS assistant_messages_session_idx
+    ON assistant_messages(session_id, created_at);
+
+-- ============================================================
+-- revoked_tokens: JWT revocation list (populated on /auth/logout)
+-- Rows are cleaned up by expires_at; a background job or pg_cron can prune.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS revoked_tokens (
+    jti         TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    revoked_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens (expires_at);
+

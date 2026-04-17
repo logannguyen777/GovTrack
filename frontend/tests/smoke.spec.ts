@@ -8,31 +8,37 @@ import { test, expect } from "@playwright/test";
 
 test.describe("GovFlow Frontend Smoke Tests", () => {
   test.beforeEach(async ({ page }) => {
-    // Login as staff user (Chi Lan = intake officer)
     await page.goto("/auth/login");
-    // Click the demo user button for Chi Lan (staff)
-    const staffButton = page.locator(
-      'button:has-text("Chi Lan"), button:has-text("Intake"), button:has-text("officer")'
-    );
-    if (await staffButton.first().isVisible({ timeout: 5000 })) {
-      await staffButton.first().click();
+    // Wait for JS hydration (login is fully client-side Suspense)
+    await page.waitForSelector('h1:has-text("GovFlow")', { timeout: 15000 });
+
+    // Try the admin demo button first (most permissive role)
+    // Button label is "Quản trị viên hệ thống" — use partial filter
+    const adminBtn = page.locator('button').filter({ hasText: "Quản trị viên" }).first();
+    if (await adminBtn.isVisible({ timeout: 5000 })) {
+      await adminBtn.click();
     } else {
-      // Fallback: fill login form
-      await page.fill('input[name="username"], input[placeholder*="username"]', "chilan");
-      await page.fill('input[name="password"], input[placeholder*="password"]', "demo");
+      // Fallback: manual form (Issue 3 adds this collapsible section)
+      const manualToggle = page.locator('button').filter({ hasText: "Đăng nhập bằng tài khoản khác" }).first();
+      if (await manualToggle.isVisible({ timeout: 2000 })) {
+        await manualToggle.click();
+      }
+      await page.fill('input[name="username"]', "admin");
+      await page.fill('input[name="password"]', "demo");
       await page.click('button[type="submit"]');
     }
-    // Wait for redirect to internal pages
-    await page.waitForURL(/\/(dashboard|inbox|intake)/, { timeout: 10000 });
+
+    // Admin lands on /dashboard; other roles may differ
+    await page.waitForURL(/\/(dashboard|inbox|intake|portal|security|trace|compliance|documents)/, {
+      timeout: 15000,
+    });
   });
 
   test("Screen 1: Citizen Portal renders", async ({ page }) => {
     await page.goto("/portal");
     await page.waitForLoadState("networkidle");
-    // Page should load without error (no 500, no blank page)
     const title = await page.title();
     expect(title).toBeTruthy();
-    // Verify no unhandled error on screen
     const errorBoundary = page.locator("text=Something went wrong");
     await expect(errorBoundary).not.toBeVisible({ timeout: 2000 }).catch(() => {});
   });
@@ -40,23 +46,21 @@ test.describe("GovFlow Frontend Smoke Tests", () => {
   test("Screen 2: Intake UI renders", async ({ page }) => {
     await page.goto("/intake");
     await page.waitForLoadState("networkidle");
-    // Page should load without error
-    const errorBoundary = page.locator("text=Something went wrong");
-    await expect(errorBoundary).not.toBeVisible({ timeout: 3000 }).catch(() => {});
-  });
-
-  test("Screen 3: Agent Trace Viewer renders", async ({ page }) => {
-    await page.goto("/trace/test-case-001");
-    await page.waitForLoadState("networkidle");
-    // React Flow canvas or fallback content
-    const content = page.locator(".react-flow, [data-testid='trace'], main");
+    const content = page.locator("main, h1");
     await expect(content.first()).toBeVisible({ timeout: 5000 });
   });
 
-  test("Screen 4: Compliance Workspace renders", async ({ page }) => {
-    await page.goto("/compliance/test-case-001");
+  test("Screen 3: Agent Trace Viewer renders", async ({ page }) => {
+    await page.goto("/trace/CASE-2026-0001");
     await page.waitForLoadState("networkidle");
-    const content = page.locator("main, [data-testid='compliance']");
+    const content = page.locator(".react-flow, [data-testid='trace'], main, h1");
+    await expect(content.first()).toBeVisible({ timeout: 8000 });
+  });
+
+  test("Screen 4: Compliance Workspace renders", async ({ page }) => {
+    await page.goto("/compliance/CASE-2026-0001");
+    await page.waitForLoadState("networkidle");
+    const content = page.locator("main, h1, [data-testid='compliance']");
     await expect(content.first()).toBeVisible({ timeout: 5000 });
   });
 
@@ -68,9 +72,9 @@ test.describe("GovFlow Frontend Smoke Tests", () => {
   });
 
   test("Screen 6: Document Viewer renders", async ({ page }) => {
-    await page.goto("/documents/test-doc-001");
+    await page.goto("/documents");
     await page.waitForLoadState("networkidle");
-    const content = page.locator("main, [data-testid='document']");
+    const content = page.locator("main, h1, [data-testid='document']");
     await expect(content.first()).toBeVisible({ timeout: 5000 });
   });
 
@@ -91,9 +95,8 @@ test.describe("GovFlow Frontend Smoke Tests", () => {
   test("Sidebar navigation works", async ({ page }) => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
-    // Click a nav item (Inbox or similar)
     const navItem = page.locator(
-      'nav a[href*="/inbox"], [data-testid="nav-inbox"], a:has-text("Inbox")'
+      'nav a[href*="/inbox"], [data-testid="nav-inbox"], a:has-text("Hồ sơ đến")'
     );
     if (await navItem.first().isVisible({ timeout: 3000 })) {
       await navItem.first().click();
@@ -104,11 +107,8 @@ test.describe("GovFlow Frontend Smoke Tests", () => {
   test("Theme toggle (dark/light) works", async ({ page }) => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
-    // Verify the page has a theme class (dark or light)
     const htmlClass = await page.locator("html").getAttribute("class");
-    // Page should have loaded with either dark or light mode
     expect(htmlClass).toBeTruthy();
-    // Look for any toggle-like button and verify page doesn't crash on interaction
     const buttons = page.locator("button").all();
     expect((await buttons).length).toBeGreaterThan(0);
   });

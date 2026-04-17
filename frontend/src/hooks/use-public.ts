@@ -11,7 +11,17 @@ export const publicKeys = {
   case: (code: string) => ["public", "case", code] as const,
   tthc: ["public", "tthc"] as const,
   stats: ["public", "stats"] as const,
+  audit: (code: string) => ["public", "audit", code] as const,
 };
+
+// ---- Types ----
+
+export interface PublicAuditEntry {
+  role: string;
+  org: string;
+  action: string;
+  timestamp: string;
+}
 
 // ---- Hooks ----
 
@@ -51,5 +61,23 @@ export function usePublicStats() {
     queryKey: publicKeys.stats,
     queryFn: () => apiClient.get<PublicStatsResponse>("/api/public/stats"),
     staleTime: 60_000, // 1 minute
+  });
+}
+
+/**
+ * Estonia-style public audit log — who accessed this citizen's case.
+ * Endpoint: GET /api/public/track/{case_code}/audit-public
+ * Returns entries sorted newest-first by default from the server.
+ */
+export function usePublicAudit(caseCode: string) {
+  return useQuery<PublicAuditEntry[]>({
+    queryKey: publicKeys.audit(caseCode),
+    queryFn: () =>
+      apiClient.get<PublicAuditEntry[]>(
+        `/api/public/track/${encodeURIComponent(caseCode)}/audit-public`,
+      ),
+    enabled: Boolean(caseCode),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   });
 }

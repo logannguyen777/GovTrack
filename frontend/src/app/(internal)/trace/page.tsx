@@ -164,17 +164,30 @@ export default function TracePage() {
         </div>
 
         {/* Live pipeline indicator */}
-        {runningCount > 0 && (
-          <div className="flex shrink-0 items-center gap-2 rounded-full border border-[var(--accent-info)]/40 bg-[var(--accent-info)]/10 px-3 py-1.5">
-            <span
-              aria-hidden="true"
-              className="inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--accent-info)]"
-            />
-            <span className="text-xs font-medium text-[var(--accent-info)]">
-              {runningCount} pipeline đang chạy
-            </span>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          {runningCount > 0 && (
+            <div className="flex shrink-0 items-center gap-2 rounded-full border border-[var(--accent-info)]/40 bg-[var(--accent-info)]/10 px-3 py-1.5">
+              <span
+                aria-hidden="true"
+                className="inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--accent-info)]"
+              />
+              <span className="text-xs font-medium text-[var(--accent-info)]">
+                {runningCount} pipeline đang chạy
+              </span>
+            </div>
+          )}
+
+          {/* Demo hero case shortcut for judges */}
+          <button
+            type="button"
+            onClick={() => router.push("/trace/CASE-2026-0001")}
+            className="flex shrink-0 items-center gap-1.5 rounded-full border border-purple-300 bg-gradient-to-r from-purple-50 to-violet-50 px-3 py-1.5 text-xs font-medium text-purple-700 hover:opacity-90 dark:border-purple-700 dark:from-purple-950 dark:to-violet-950 dark:text-purple-200"
+            title="Mở hồ sơ CPXD mẫu đã có đầy đủ trace + gap + citation"
+          >
+            <BotMessageSquare size={12} />
+            Xem case mẫu CPXD
+          </button>
+        </div>
       </div>
 
       {/* Filters row */}

@@ -26,7 +26,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from ...database import async_gremlin_submit, pg_connection
+from ...database import pg_connection
+# async_gremlin_submit replaced by self._get_gdb().execute() per task 1.1
 from ..base import AgentResult, BaseAgent
 from ..orchestrator import register_agent
 
@@ -95,7 +96,7 @@ class SecurityOfficerAgent(BaseAgent):
 
         try:
             # -- Step 1: Fetch full case context (unrestricted) --
-            case_context = await async_gremlin_submit(
+            case_context = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid)"
                 ".project('case', 'applicant', 'documents', 'classification')"
                 ".by(valueMap(true))"
@@ -145,7 +146,7 @@ class SecurityOfficerAgent(BaseAgent):
             # -- Step 5: Get existing classification (no-downgrade) --
             existing_level = "Unclassified"
             try:
-                existing = await async_gremlin_submit(
+                existing = await self._get_gdb().execute(
                     "g.V().has('Case', 'case_id', cid)"
                     ".values('current_classification')",
                     {"cid": case_id},
@@ -169,66 +170,94 @@ class SecurityOfficerAgent(BaseAgent):
             )
 
             llm_level = classification.get("classification_level", "Unclassified")
-
-            # -- Step 7: Enforce no-downgrade --
-            final_level = self._max_level(existing_level, llm_level)
-
-            # Also consider keyword suggestion (conservative)
             keyword_suggested = keyword_results.get("suggested_level", "Unclassified")
-            final_level = self._max_level(final_level, keyword_suggested)
 
-            # Aggregation risk bumps to at least Confidential
-            if aggregation_risk and self.CLEARANCE_ORDER.get(final_level, 0) < 1:
-                final_level = "Confidential"
+            # -- Step 7: Enforce no-downgrade (refactored) --
+            # Build the proposed level from all non-existing-level signals.
+            aggregation_suggested = "Confidential" if aggregation_risk else "Unclassified"
+            location_suggested = "Confidential" if location_sensitive else "Unclassified"
 
-            # Location sensitivity bumps to at least Confidential
-            if location_sensitive and self.CLEARANCE_ORDER.get(final_level, 0) < 1:
-                final_level = "Confidential"
+            # Proposed = max of all inputs EXCEPT the existing classification
+            proposed_level = self._max_level(
+                llm_level,
+                self._max_level(
+                    keyword_suggested,
+                    self._max_level(aggregation_suggested, location_suggested),
+                ),
+            )
+
+            # No-downgrade invariant: final = max(existing, proposed)
+            final_level = self._max_level(existing_level, proposed_level)
+
+            # Build Vietnamese rationale
+            if self.CLEARANCE_ORDER.get(final_level, 0) > self.CLEARANCE_ORDER.get(existing_level, 0):
+                triggers = []
+                if self.CLEARANCE_ORDER.get(keyword_suggested, 0) >= self.CLEARANCE_ORDER.get(final_level, 0):
+                    triggers.append(f"từ khóa nhạy cảm ({keyword_suggested})")
+                if aggregation_risk:
+                    triggers.append("nguy cơ tổng hợp thông tin cá nhân")
+                if location_sensitive:
+                    triggers.append("địa điểm nhạy cảm")
+                if self.CLEARANCE_ORDER.get(llm_level, 0) >= self.CLEARANCE_ORDER.get(final_level, 0):
+                    triggers.append(f"đánh giá LLM ({llm_level})")
+                rationale_vi = (
+                    f"Mức phân loại được nâng từ {existing_level} lên {final_level} "
+                    f"do: {'; '.join(triggers) if triggers else 'đánh giá tổng hợp'}."
+                )
+            else:
+                rationale_vi = "Giữ nguyên mức phân loại hiện tại."
 
             classification["classification_level"] = final_level
+            classification["classification_rationale"] = rationale_vi
 
             logger.info(
                 f"[SecurityOfficer] Final classification: {final_level} "
-                f"(existing={existing_level}, llm={llm_level}, keyword={keyword_suggested})"
+                f"(existing={existing_level}, llm={llm_level}, "
+                f"keyword={keyword_suggested}, proposed={proposed_level})"
             )
 
-            # -- Step 8: Write Classification vertex + edge --
+            # -- Steps 8+9: Write Classification vertex + edge + Case update
+            # Wrapped in logical transaction for atomic commit with retry on
+            # ConcurrentModificationException.
             cls_id = str(uuid.uuid4())
             now = datetime.now(UTC).isoformat()
             keywords_json = json.dumps(keyword_results.get("keywords", []), ensure_ascii=False)
 
-            await async_gremlin_submit(
-                "g.addV('Classification')"
-                ".property('classification_id', cls_id)"
-                ".property('level', level)"
-                ".property('reasoning', reasoning)"
-                ".property('keywords_found', keywords)"
-                ".property('location_sensitive', loc_sens)"
-                ".property('aggregation_risk', agg_risk)"
-                ".property('decided_by', decided_by)"
-                ".property('case_id', case_id)"
-                ".property('created_at', ts)"
-                ".as('cls')"
-                ".V().has('Case', 'case_id', case_id).addE('CLASSIFIED_AS').to('cls')",
-                {
-                    "cls_id": cls_id,
-                    "level": final_level,
-                    "reasoning": classification.get("reasoning", ""),
-                    "keywords": keywords_json,
-                    "loc_sens": str(location_sensitive),
-                    "agg_risk": str(aggregation_risk),
-                    "decided_by": "SecurityOfficer",
-                    "case_id": case_id,
-                    "ts": now,
-                },
-            )
-
-            # -- Step 9: Update Case.current_classification --
-            await async_gremlin_submit(
-                "g.V().has('Case', 'case_id', cid)"
-                ".property('current_classification', level)",
-                {"cid": case_id, "level": final_level},
-            )
+            _gdb_tx = self._get_gdb()
+            async with _gdb_tx.transaction() as tx:
+                await tx.submit(
+                    "g.addV('Classification')"
+                    ".property('classification_id', cls_id)"
+                    ".property('level', level)"
+                    ".property('reasoning', reasoning)"
+                    ".property('keywords_found', keywords)"
+                    ".property('location_sensitive', loc_sens)"
+                    ".property('aggregation_risk', agg_risk)"
+                    ".property('decided_by', decided_by)"
+                    ".property('case_id', case_id)"
+                    ".property('created_at', ts)"
+                    ".as('cls')"
+                    ".V().has('Case', 'case_id', case_id).addE('CLASSIFIED_AS').to('cls')",
+                    {
+                        "cls_id": cls_id,
+                        "level": final_level,
+                        "reasoning": classification.get("reasoning", ""),
+                        "keywords": keywords_json,
+                        "loc_sens": str(location_sensitive),
+                        "agg_risk": str(aggregation_risk),
+                        "decided_by": "SecurityOfficer",
+                        "case_id": case_id,
+                        "ts": now,
+                    },
+                )
+                # Step 9: Update Case.current_classification + rationale atomically
+                await tx.submit(
+                    "g.V().has('Case', 'case_id', cid)"
+                    ".property('current_classification', level)"
+                    ".property('clearance_level', level)"
+                    ".property('classification_rationale', rationale)",
+                    {"cid": case_id, "level": final_level, "rationale": rationale_vi},
+                )
 
             # -- Step 10: Write AuditEvent --
             await self._write_audit_event(
@@ -261,14 +290,16 @@ class SecurityOfficerAgent(BaseAgent):
 
             output_data = {
                 "classification_level": final_level,
+                "classification_rationale": rationale_vi,
                 "reasoning": classification.get("reasoning", ""),
                 "keywords_found": keyword_results.get("keywords", []),
                 "location_sensitive": location_sensitive,
                 "aggregation_risk": aggregation_risk,
                 "existing_level": existing_level,
+                "proposed_level": proposed_level,
                 "no_downgrade_applied": (
                     self.CLEARANCE_ORDER.get(existing_level, 0)
-                    > self.CLEARANCE_ORDER.get(llm_level, 0)
+                    > self.CLEARANCE_ORDER.get(proposed_level, 0)
                 ),
             }
             output_summary = json.dumps(output_data, ensure_ascii=False)
@@ -572,7 +603,7 @@ class SecurityOfficerAgent(BaseAgent):
             return "Unclassified"
 
         try:
-            result = await async_gremlin_submit(
+            result = await self._get_gdb().execute(
                 f"g.V().has('{resource_label}', '{prop_key}', rid)"
                 ".values('current_classification')",
                 {"rid": resource_id},
@@ -591,7 +622,7 @@ class SecurityOfficerAgent(BaseAgent):
         """Check if actor has too many denials in short window."""
         try:
             # Fetch recent audit events for this actor
-            recent_events = await async_gremlin_submit(
+            recent_events = await self._get_gdb().execute(
                 "g.V().hasLabel('AuditEvent')"
                 ".has('actor_id', aid)"
                 ".has('event_type', 'access_check')"
@@ -681,7 +712,7 @@ class SecurityOfficerAgent(BaseAgent):
         # GDB -- retry 3 times (audit trail must be intact)
         for attempt in range(3):
             try:
-                await async_gremlin_submit(
+                await self._get_gdb().execute(
                     "g.addV('AuditEvent')"
                     ".property('event_type', et)"
                     ".property('actor_id', actor)"

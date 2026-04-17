@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.gitignore
+tests/
+playwright-report
+test-results
+*.log
+.env
+.env.*
+README.md
+tsconfig.tsbuildinfo

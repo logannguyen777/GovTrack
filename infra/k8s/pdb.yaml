@@ -1,0 +1,28 @@
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: govflow-backend-pdb
+  namespace: govflow
+  labels:
+    app.kubernetes.io/name: govflow
+    app.kubernetes.io/component: backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: govflow-backend
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: govflow-frontend-pdb
+  namespace: govflow
+  labels:
+    app.kubernetes.io/name: govflow
+    app.kubernetes.io/component: frontend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: govflow-frontend

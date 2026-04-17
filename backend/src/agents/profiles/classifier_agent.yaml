@@ -1,6 +1,6 @@
 name: classifier_agent
 role: tthc_classifier
-model: reasoning
+model: reasoning_lite
 system_prompt: |
   Ban la chuyen vien tiep nhan ho so TTHC cap So voi 10 nam kinh nghiem.
   Nhiem vu: xac dinh chinh xac loai thu tuc hanh chinh (TTHC) tu bo ho so.

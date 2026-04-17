@@ -10,6 +10,7 @@ Pipeline per document:
   5. ND 30/2020 format validation (if applicable)
   6. Write results to GDB (Document properties + ExtractedEntity vertices)
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,7 @@ import time
 import uuid
 from typing import Any
 
-from ...database import async_gremlin_submit, oss_get_signed_url
+from ...database import oss_get_signed_url
 from ..base import AgentResult, BaseAgent
 from ..orchestrator import register_agent
 
@@ -36,47 +37,81 @@ class DocAnalyzerAgent(BaseAgent):
     # Entity schemas per document type
     ENTITY_SCHEMAS: dict[str, list[str]] = {
         "gcn_qsdd": [
-            "gcn_number", "owner_name", "land_parcel", "area_m2",
-            "location", "issuing_authority", "issue_date",
+            "gcn_number",
+            "owner_name",
+            "land_parcel",
+            "area_m2",
+            "location",
+            "issuing_authority",
+            "issue_date",
         ],
         "don_de_nghi": [
-            "applicant_name", "project_name", "project_type",
-            "project_address", "request_type",
+            "applicant_name",
+            "project_name",
+            "project_type",
+            "project_address",
+            "request_type",
         ],
         "ban_ve_thiet_ke": [
-            "building_type", "floor_area_m2", "height_m",
-            "floors", "construction_class",
+            "building_type",
+            "floor_area_m2",
+            "height_m",
+            "floors",
+            "construction_class",
         ],
         "giay_phep_kinh_doanh": [
-            "company_name", "tax_id", "business_type",
-            "registered_address", "representative",
+            "company_name",
+            "tax_id",
+            "business_type",
+            "registered_address",
+            "representative",
         ],
         "van_ban_tham_duyet_pccc": [
-            "approval_number", "issuing_authority", "approval_date",
-            "building_type", "conditions",
+            "approval_number",
+            "issuing_authority",
+            "approval_date",
+            "building_type",
+            "conditions",
         ],
         "cam_ket_moi_truong": [
-            "project_name", "investor", "commitment_number",
-            "approval_authority", "approval_date",
+            "project_name",
+            "investor",
+            "commitment_number",
+            "approval_authority",
+            "approval_date",
         ],
         "chung_minh_nhan_dan": [
-            "full_name", "date_of_birth", "id_number",
-            "place_of_origin", "place_of_residence",
+            "full_name",
+            "date_of_birth",
+            "id_number",
+            "place_of_origin",
+            "place_of_residence",
         ],
         "ho_chieu": [
-            "full_name", "passport_number", "nationality",
-            "date_of_birth", "expiry_date",
+            "full_name",
+            "passport_number",
+            "nationality",
+            "date_of_birth",
+            "expiry_date",
         ],
         "giay_khai_sinh": [
-            "full_name", "date_of_birth", "place_of_birth",
-            "father_name", "mother_name", "registration_number",
+            "full_name",
+            "date_of_birth",
+            "place_of_birth",
+            "father_name",
+            "mother_name",
+            "registration_number",
         ],
     }
 
     # Doc types requiring ND 30/2020 format validation
     ND30_DOC_TYPES: set[str] = {
-        "quyet_dinh", "cong_van", "thong_bao", "giay_phep",
-        "bien_ban", "giay_uy_quyen",
+        "quyet_dinh",
+        "cong_van",
+        "thong_bao",
+        "giay_phep",
+        "bien_ban",
+        "giay_uy_quyen",
     }
 
     async def build_messages(self, case_id: str) -> list[dict[str, Any]]:
@@ -92,14 +127,18 @@ class DocAnalyzerAgent(BaseAgent):
         step_id = str(uuid.uuid4())
 
         logger.info(f"[DocAnalyzer] Starting on case {case_id}")
-        await self._broadcast(case_id, "agent_started", {
-            "agent_name": self.profile.name,
-            "step_id": step_id,
-        })
+        await self._broadcast(
+            case_id,
+            "agent_started",
+            {
+                "agent_name": self.profile.name,
+                "step_id": step_id,
+            },
+        )
 
         try:
             # Fetch all documents in the case's bundles
-            documents = await async_gremlin_submit(
+            documents = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid)"
                 ".out('HAS_BUNDLE').out('CONTAINS').hasLabel('Document')"
                 ".valueMap(true)",
@@ -115,22 +154,28 @@ class DocAnalyzerAgent(BaseAgent):
                 try:
                     result = await self._process_document(case_id, doc)
                     results.append(result)
-                    await self._broadcast(case_id, "doc_processed", {
-                        "agent_name": self.profile.name,
-                        "doc_id": result["doc_id"],
-                        "doc_type": result["doc_type"],
-                        "confidence": result["confidence"],
-                    })
+                    await self._broadcast(
+                        case_id,
+                        "doc_processed",
+                        {
+                            "agent_name": self.profile.name,
+                            "doc_id": result["doc_id"],
+                            "doc_type": result["doc_type"],
+                            "confidence": result["confidence"],
+                        },
+                    )
                 except Exception as e:
                     doc_id = self._extract_prop(doc, "doc_id")
                     logger.error(f"[DocAnalyzer] Failed on doc {doc_id}: {e}", exc_info=True)
-                    results.append({
-                        "doc_id": doc_id,
-                        "doc_type": "unknown",
-                        "confidence": 0.0,
-                        "status": "failed",
-                        "error": str(e),
-                    })
+                    results.append(
+                        {
+                            "doc_id": doc_id,
+                            "doc_type": "unknown",
+                            "confidence": 0.0,
+                            "status": "failed",
+                            "error": str(e),
+                        }
+                    )
 
             # Finalize
             duration_ms = (time.monotonic() - start_time) * 1000
@@ -145,18 +190,25 @@ class DocAnalyzerAgent(BaseAgent):
                 status="completed",
             )
 
-            output_summary = json.dumps({
-                "documents_processed": len(results),
-                "documents_succeeded": sum(1 for r in results if r.get("status") != "failed"),
-                "results": results,
-            }, ensure_ascii=False)
+            output_summary = json.dumps(
+                {
+                    "documents_processed": len(results),
+                    "documents_succeeded": sum(1 for r in results if r.get("status") != "failed"),
+                    "results": results,
+                },
+                ensure_ascii=False,
+            )
 
-            await self._broadcast(case_id, "agent_completed", {
-                "agent_name": self.profile.name,
-                "step_id": step_id,
-                "documents_processed": len(results),
-                "duration_ms": round(duration_ms),
-            })
+            await self._broadcast(
+                case_id,
+                "agent_completed",
+                {
+                    "agent_name": self.profile.name,
+                    "step_id": step_id,
+                    "documents_processed": len(results),
+                    "duration_ms": round(duration_ms),
+                },
+            )
 
             return AgentResult(
                 agent_name=self.profile.name,
@@ -182,10 +234,14 @@ class DocAnalyzerAgent(BaseAgent):
                 error=str(e),
             )
 
-            await self._broadcast(case_id, "agent_failed", {
-                "agent_name": self.profile.name,
-                "error": str(e),
-            })
+            await self._broadcast(
+                case_id,
+                "agent_failed",
+                {
+                    "agent_name": self.profile.name,
+                    "error": str(e),
+                },
+            )
 
             return AgentResult(
                 agent_name=self.profile.name,
@@ -236,7 +292,7 @@ class DocAnalyzerAgent(BaseAgent):
 
         # Step 7: Write Document property updates to GDB
         needs_review = type_confidence < self.CONFIDENCE_THRESHOLD
-        await async_gremlin_submit(
+        await self._get_gdb().execute(
             "g.V().has('Document', 'doc_id', did)"
             ".property('type', dtype).property('confidence', conf)"
             ".property('has_red_stamp', stamp).property('has_signature', sig)"
@@ -257,7 +313,7 @@ class DocAnalyzerAgent(BaseAgent):
         # Step 8: Write ExtractedEntity vertices + EXTRACTED edges
         for entity in entities:
             entity_id = str(uuid.uuid4())
-            await async_gremlin_submit(
+            await self._get_gdb().execute(
                 "g.addV('ExtractedEntity')"
                 ".property('entity_id', eid).property('field_name', fname)"
                 ".property('value', val).property('confidence', conf)"
@@ -304,16 +360,19 @@ class DocAnalyzerAgent(BaseAgent):
                 "role": "system",
                 "content": (
                     "Trich xuat toan bo noi dung van ban tu hinh anh, giu nguyen bo cuc. "
-                    "Tra ve JSON: {\"text\": \"...\", \"layout_blocks\": "
-                    "[{\"type\": \"header|body|table|footer\", \"text\": \"...\"}], "
-                    "\"quality_score\": 0.0-1.0}"
+                    'Tra ve JSON: {"text": "...", "layout_blocks": '
+                    '[{"type": "header|body|table|footer", "text": "..."}], '
+                    '"quality_score": 0.0-1.0}'
                 ),
             },
             {
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": signed_url}},
-                    {"type": "text", "text": "OCR toan bo van ban nay, giu nguyen bo cuc. Tra ve JSON."},
+                    {
+                        "type": "text",
+                        "text": "OCR toan bo van ban nay, giu nguyen bo cuc. Tra ve JSON.",
+                    },
                 ],
             },
         ]
@@ -332,7 +391,7 @@ class DocAnalyzerAgent(BaseAgent):
                         "text": (
                             f"OCR text (500 ky tu dau): {ocr_text[:500]}\n\n"
                             "Nhan dien loai tai lieu. Chi tra ve JSON: "
-                            "{\"doc_type\": \"...\", \"confidence\": 0.XX}"
+                            '{"doc_type": "...", "confidence": 0.XX}'
                         ),
                     },
                 ],
@@ -353,15 +412,16 @@ class DocAnalyzerAgent(BaseAgent):
                 "content": (
                     "Trich xuat thong tin tu van ban hanh chinh Viet Nam. "
                     "Chi tra ve gia tri doc duoc, khong doan. "
-                    "Tra ve JSON array: [{\"field_name\": \"...\", \"value\": \"...\", "
-                    "\"confidence\": 0.XX, \"page_num\": 1}]"
+                    'Tra ve JSON array: [{"field_name": "...", "value": "...", '
+                    '"confidence": 0.XX, "page_num": 1}]'
                 ),
             },
             {
                 "role": "user",
                 "content": (
                     f"Loai tai lieu: {doc_type}\n"
-                    f"Cac truong can trich xuat: {json.dumps(schema_fields, ensure_ascii=False)}\n\n"
+                    "Cac truong can trich xuat: "
+                    f"{json.dumps(schema_fields, ensure_ascii=False)}\n\n"
                     f"Noi dung van ban:\n{ocr_text[:3000]}\n\n"
                     "Trich xuat va tra ve JSON array."
                 ),
@@ -385,8 +445,8 @@ class DocAnalyzerAgent(BaseAgent):
                             "Kiem tra tai lieu nay:\n"
                             "1) Co con dau do (moc tron co quan nha nuoc) khong?\n"
                             "2) Co chu ky khong?\n"
-                            "Tra ve JSON: {\"has_stamp\": true/false, "
-                            "\"stamp_details\": \"...\", \"has_signature\": true/false}"
+                            'Tra ve JSON: {"has_stamp": true/false, '
+                            '"stamp_details": "...", "has_signature": true/false}'
                         ),
                     },
                 ],
@@ -410,9 +470,9 @@ class DocAnalyzerAgent(BaseAgent):
                 "content": (
                     f"Noi dung van ban:\n{ocr_text[:2000]}\n\n"
                     "Kiem tra the thuc ND 30/2020. Tra ve JSON:\n"
-                    "{\"valid\": true/false, \"checks\": "
-                    "{\"quoc_hieu\": true/false, \"tieu_ngu\": true/false, ...}, "
-                    "\"issues\": [\"...\"]}"
+                    '{"valid": true/false, "checks": '
+                    '{"quoc_hieu": true/false, "tieu_ngu": true/false, ...}, '
+                    '"issues": ["..."]}'
                 ),
             },
         ]
@@ -436,7 +496,7 @@ class DocAnalyzerAgent(BaseAgent):
                 messages=messages,
                 model=model,
                 temperature=0.2,
-                max_tokens=4096,
+                max_tokens=1500,
             )
 
             content = completion.choices[0].message.content or ""
@@ -452,18 +512,86 @@ class DocAnalyzerAgent(BaseAgent):
                 if attempt == 0:
                     logger.warning("[DocAnalyzer] Invalid JSON from Qwen, retrying")
                     messages.append({"role": "assistant", "content": content})
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "Output KHONG hop le JSON. Hay tra lai DUNG FORMAT JSON. "
-                            "Khong markdown, khong comment. Chi JSON thuan tuy."
-                        ),
-                    })
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Output KHONG hop le JSON. Hay tra lai DUNG FORMAT JSON. "
+                                "Khong markdown, khong comment. Chi JSON thuan tuy."
+                            ),
+                        }
+                    )
                 else:
                     logger.error(f"[DocAnalyzer] JSON parse failed after retry: {content[:200]}")
                     return {"error": "json_parse_failed", "raw": content[:500]}
 
         return {"error": "unreachable"}
+
+    # ------------------------------------------------------------------
+    # Public facade for /api/documents/extract (no GDB writes)
+    # ------------------------------------------------------------------
+
+    async def extract_entities_public(
+        self,
+        url: str,
+        tthc_hint: str | None = None,
+    ) -> Any:
+        """
+        Citizen-facing document extraction.
+        Reuses private VL methods; does NOT write to GDB.
+        Returns ExtractResponse suitable for wizard pre-fill.
+        """
+        from ...models.chat_schemas import ExtractedEntity, ExtractResponse
+
+        extraction_id = str(uuid.uuid4())
+
+        # OCR
+        ocr_result = await self._ocr_with_layout(url)
+        raw_text = ocr_result.get("text", "")
+
+        # Detect document type
+        doc_type, type_confidence = await self._detect_doc_type(url, raw_text)
+
+        # Use tthc_hint to bias schema selection when doc type is unclear
+        effective_doc_type = doc_type
+        if tthc_hint and doc_type not in self.ENTITY_SCHEMAS:
+            # Try to infer schema from TTHC context
+            tthc_to_schema = {
+                "1.001757": "chung_minh_nhan_dan",
+                "1.004415": "don_de_nghi",
+                "1.000046": "gcn_qsdd",
+            }
+            effective_doc_type = tthc_to_schema.get(tthc_hint, doc_type)
+
+        # Extract entities (no GDB write)
+        entities: list[dict] = []
+        if (
+            effective_doc_type in self.ENTITY_SCHEMAS
+            and type_confidence >= self.CONFIDENCE_THRESHOLD
+        ):
+            raw_entities = await self._extract_entities(raw_text, effective_doc_type)
+            if isinstance(raw_entities, list):
+                entities = raw_entities
+
+        # Map to ExtractedEntity schema
+        extracted = [
+            ExtractedEntity(
+                key=e.get("field_name", e.get("key", "")),
+                value=e.get("value", ""),
+                confidence=float(e.get("confidence", 0.7)),
+                bbox=e.get("bbox"),
+            )
+            for e in entities
+            if e.get("field_name") or e.get("key")
+        ]
+
+        return ExtractResponse(
+            extraction_id=extraction_id,
+            document_type=doc_type if doc_type != "other" else None,
+            entities=extracted,
+            raw_text=raw_text[:3000],  # truncate for response size
+            confidence=type_confidence,
+        )
 
     @staticmethod
     def _extract_prop(vertex_map: dict, key: str) -> str:

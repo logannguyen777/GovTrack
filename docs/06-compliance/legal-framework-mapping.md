@@ -28,6 +28,9 @@ Mỗi feature của GovFlow được map đến 1 hoặc nhiều điều luật 
 | **Compliance check ĐKKD** | Luật DN 2020 | Điều 27, 28 (đăng ký thành lập DN) |
 | **Compliance check LLTP** | Luật LLTP 2009 | Điều 46 (cấp phiếu LLTP) |
 | **Compliance check GPMT** | Luật BVMT 2020 | Điều 43 (giấy phép môi trường) |
+| **DSR endpoints (NĐ 13/2023)** | NĐ 13/2023/NĐ-CP | Điều 9 (quyền truy cập), Điều 10 (quyền xóa), Điều 11 (hạn chế mục đích) — `/api/dsr/export`, `/api/dsr/erasure` |
+| **NĐ 30/2020 retention cron** | NĐ 30/2020/NĐ-CP | Điều 28 (thời hạn lưu trữ văn bản) — cron job tự động archive hồ sơ quá hạn |
+| **Drafter chữ ký số validation** | NĐ 30/2020/NĐ-CP | Điều 25 + Điều 8 khoản 8 (chữ ký và dấu) — `validate_nd30_format()` kiểm tra placeholder chữ ký số trong mọi draft |
 
 ## Deep dive — key anchors
 

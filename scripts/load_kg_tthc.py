@@ -56,6 +56,10 @@ def main():
         label = v["label"]
         bindings = {"b0": v["id"]}
         prop_chain = ".property('_kg_id', b0)"
+        # TTHC-related vertices are public information — classification=0
+        # so PUBLIC_SESSION (PermittedGremlinClient) can read them.
+        if label in ("TTHCSpec", "RequiredComponent", "ProcedureCategory", "Organization"):
+            prop_chain += ".property('classification', 0)"
         idx = 1
         for k, val in v.get("properties", {}).items():
             if val is None:

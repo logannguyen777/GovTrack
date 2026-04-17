@@ -4,9 +4,10 @@ Create 6 test users with varying roles and clearance levels.
 Requires PostgreSQL tables to exist (run init.sql first).
 """
 import asyncio
-import hashlib
 import sys
 import uuid
+
+from argon2 import PasswordHasher as _PH
 
 sys.path.insert(0, "backend")
 from src.database import create_pg_pool, get_pg_pool, close_pg_pool
@@ -23,7 +24,7 @@ USERS = [
 
 
 def hash_password(pw: str) -> str:
-    return hashlib.sha256(pw.encode()).hexdigest()
+    return _PH().hash(pw)
 
 
 async def main():

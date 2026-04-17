@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from ..models.schemas import AgentProfile, ClearanceLevel
+from ..models.schemas import AgentProfile
 
 
 class SDKGuardViolation(Exception):
@@ -26,6 +26,7 @@ class SDKGuardViolation(Exception):
 @dataclass
 class ParsedTraversal:
     """Result of parsing a Gremlin bytecode/query string."""
+
     accessed_labels: set[str] = field(default_factory=set)
     accessed_edge_types: set[str] = field(default_factory=set)
     accessed_properties: set[str] = field(default_factory=set)
@@ -67,25 +68,29 @@ class SDKGuard:
         disallowed_labels = parsed.accessed_labels - set(self.profile.read_node_labels)
         if disallowed_labels:
             raise SDKGuardViolation(
-                self.profile.agent_id, "READ_LABEL_DENIED",
-                f"Cannot read labels: {disallowed_labels}"
+                self.profile.agent_id,
+                "READ_LABEL_DENIED",
+                f"Cannot read labels: {disallowed_labels}",
             )
         disallowed_edges = parsed.accessed_edge_types - set(self.profile.read_edge_types)
         if disallowed_edges:
             raise SDKGuardViolation(
-                self.profile.agent_id, "READ_EDGE_DENIED",
-                f"Cannot traverse edges: {disallowed_edges}"
+                self.profile.agent_id,
+                "READ_EDGE_DENIED",
+                f"Cannot traverse edges: {disallowed_edges}",
             )
         forbidden_accessed = parsed.accessed_properties & set(self.profile.forbidden_properties)
         if forbidden_accessed:
             raise SDKGuardViolation(
-                self.profile.agent_id, "PROPERTY_FORBIDDEN",
-                f"Cannot access properties: {forbidden_accessed}"
+                self.profile.agent_id,
+                "PROPERTY_FORBIDDEN",
+                f"Cannot access properties: {forbidden_accessed}",
             )
         if parsed.traversal_depth > self.profile.max_traversal_depth:
             raise SDKGuardViolation(
-                self.profile.agent_id, "DEPTH_EXCEEDED",
-                f"Depth {parsed.traversal_depth} > max {self.profile.max_traversal_depth}"
+                self.profile.agent_id,
+                "DEPTH_EXCEEDED",
+                f"Depth {parsed.traversal_depth} > max {self.profile.max_traversal_depth}",
             )
 
     def check_write(self, parsed: ParsedTraversal) -> None:
@@ -95,14 +100,16 @@ class SDKGuard:
         disallowed_creates = parsed.created_labels - set(self.profile.write_node_labels)
         if disallowed_creates:
             raise SDKGuardViolation(
-                self.profile.agent_id, "WRITE_LABEL_DENIED",
-                f"Cannot create labels: {disallowed_creates}"
+                self.profile.agent_id,
+                "WRITE_LABEL_DENIED",
+                f"Cannot create labels: {disallowed_creates}",
             )
         disallowed_edges = parsed.created_edge_types - set(self.profile.write_edge_types)
         if disallowed_edges:
             raise SDKGuardViolation(
-                self.profile.agent_id, "WRITE_EDGE_DENIED",
-                f"Cannot create edges: {disallowed_edges}"
+                self.profile.agent_id,
+                "WRITE_EDGE_DENIED",
+                f"Cannot create edges: {disallowed_edges}",
             )
 
     def auto_rewrite(self, query: str) -> str:
@@ -116,8 +123,67 @@ class SDKGuard:
         )
         return rewritten
 
+    # ------------------------------------------------------------------
+    # Injection guard patterns
+    # ------------------------------------------------------------------
+    # Groovy line comment outside a string context
+    _COMMENT_LINE = re.compile(r"//")
+    # Groovy block comment
+    _COMMENT_BLOCK = re.compile(r"/\*")
+    # Control characters (ASCII 0-8, 11-31 except tab=9, lf=10, cr=13)
+    _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+    # CR or LF anywhere inside the query body (normalised before parsing)
+    _NEWLINE = re.compile(r"[\r\n]")
+    # Top-level semicolons (multi-statement injection)
+    _SEMICOLON = re.compile(r";")
+
+    def _reject_if_injection(self, query: str) -> None:
+        """Pre-reject queries containing injection markers.
+
+        Checks (in order):
+        1. Control characters (except normal whitespace already normalised).
+        2. Groovy comment markers ``//`` or ``/*``.
+        3. Newlines inside the query body.
+        4. Semicolons at the top level (multi-statement).
+
+        Raises SDKGuardViolation on any match.
+        """
+        if self._CONTROL_CHARS.search(query):
+            raise SDKGuardViolation(
+                self.profile.agent_id,
+                "INJECTION_CONTROL_CHARS",
+                "Query contains control characters",
+            )
+        if self._COMMENT_LINE.search(query):
+            raise SDKGuardViolation(
+                self.profile.agent_id,
+                "INJECTION_COMMENT",
+                "Query contains Groovy line comment marker '//'",
+            )
+        if self._COMMENT_BLOCK.search(query):
+            raise SDKGuardViolation(
+                self.profile.agent_id,
+                "INJECTION_COMMENT",
+                "Query contains Groovy block comment marker '/*'",
+            )
+        if self._NEWLINE.search(query):
+            raise SDKGuardViolation(
+                self.profile.agent_id,
+                "INJECTION_NEWLINE",
+                "Query contains CR or LF characters",
+            )
+        if self._SEMICOLON.search(query):
+            raise SDKGuardViolation(
+                self.profile.agent_id,
+                "INJECTION_MULTI_STATEMENT",
+                "Query contains semicolon (multi-statement injection rejected)",
+            )
+
     def validate(self, query: str) -> str:
-        """Full validation pipeline: parse -> check_read -> check_write -> auto_rewrite."""
+        """Full validation: inject_guard -> parse -> check_read -> check_write -> rewrite."""
+        # Normalise leading/trailing whitespace before injection checks
+        query = query.strip()
+        self._reject_if_injection(query)
         parsed = self.parse_query(query)
         self.check_read(parsed)
         self.check_write(parsed)

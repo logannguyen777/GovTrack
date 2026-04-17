@@ -18,7 +18,8 @@ import time
 import uuid
 from typing import Any
 
-from ...database import async_gremlin_submit, pg_connection
+from ...database import pg_connection
+# async_gremlin_submit replaced by self._get_gdb().execute() per task 1.1
 from ..base import AgentResult, BaseAgent
 from ..orchestrator import register_agent
 
@@ -160,6 +161,16 @@ class LegalLookupAgent(BaseAgent):
         candidates = await self._vector_recall(query)
         logger.info(f"[LegalLookup] Step 1 vector recall: {len(candidates)} candidates")
 
+        await self._emit("search_log", search_log={
+            "step": "vector_recall",
+            "query": query,
+            "top_k": [
+                {"law_id": c.get("law_id"), "article": c.get("article_number"),
+                 "similarity": round(c.get("similarity", 0), 4)}
+                for c in candidates[:10]
+            ],
+        })
+
         if not candidates:
             logger.info("[LegalLookup] No vector matches, returning empty")
             return []
@@ -168,13 +179,24 @@ class LegalLookupAgent(BaseAgent):
         expanded: list[dict[str, Any]] = []
         for c in candidates:
             effective = await self._resolve_effective_article(
-                c["law_id"], str(c["article_number"])
+                c["law_id"], str(c["article_number"]), query=query
             )
             if effective:
                 effective["original_score"] = c.get("similarity", 0)
                 expanded.append(effective)
 
         logger.info(f"[LegalLookup] Step 2 graph expansion: {len(expanded)} effective articles")
+
+        await self._emit("graph_op", graph_op={
+            "step": "graph_expansion",
+            "query": "SUPERSEDED_BY / AMENDED_BY chain resolution",
+            "nodes": [
+                {"_kg_id": a.get("_kg_id", ""), "law_code": a.get("law_code", ""),
+                 "num": a.get("num", "")}
+                for a in expanded[:20]
+            ],
+            "edges": [],
+        })
 
         if not expanded:
             logger.info("[LegalLookup] All articles superseded/repealed, returning empty")
@@ -185,6 +207,16 @@ class LegalLookupAgent(BaseAgent):
         top_candidates = reranked[: self.TOP_K_RERANK]
         logger.info(f"[LegalLookup] Step 3 rerank: top {len(top_candidates)} selected")
 
+        await self._emit("search_log", search_log={
+            "step": "relevance_rerank",
+            "query": query,
+            "reranked": [
+                {"law_code": a.get("law_code", ""), "num": a.get("num", ""),
+                 "score": round(a.get("rerank_score", a.get("original_score", 0)), 4)}
+                for a in top_candidates
+            ],
+        })
+
         # ── Step 4: Cross-Reference Expansion ────────────────────
         enriched = await self._expand_cross_references(top_candidates)
         logger.info(f"[LegalLookup] Step 4 cross-ref expansion: {len(enriched)} total articles")
@@ -192,6 +224,16 @@ class LegalLookupAgent(BaseAgent):
         # ── Step 5: Citation Extraction ──────────────────────────
         citations = await self._extract_citations(enriched, query, case_context, case_id)
         logger.info(f"[LegalLookup] Step 5 citation extraction: {len(citations)} citations written")
+
+        await self._emit("search_log", search_log={
+            "step": "citation_extraction",
+            "query": query,
+            "citations_kept": [
+                {"citation_id": c.get("citation_id", ""), "law_code": c.get("law_code", ""),
+                 "article_num": c.get("article_num", ""), "confidence": c.get("confidence", 0)}
+                for c in citations
+            ],
+        })
 
         return citations
 
@@ -231,15 +273,41 @@ class LegalLookupAgent(BaseAgent):
     # Step 2: Graph Expansion (amendment/supersession chain resolution)
     # ------------------------------------------------------------------
 
+    # Historical-query detection keywords
+    _HISTORICAL_KEYWORDS = ("trước đây", "đã bị thay thế", "trươc day", "da bi thay the")
+
+    @classmethod
+    def _is_historical_query(cls, query: str) -> bool:
+        """Return True if the user is explicitly asking about a historical/repealed version."""
+        q_lower = query.lower()
+        if any(kw in q_lower for kw in cls._HISTORICAL_KEYWORDS):
+            return True
+        # Also detect explicit decree numbers older than 5 years (heuristic: 4-digit year ≤ current-5)
+        import re as _re
+        year_hits = _re.findall(r"\b(19\d{2}|20[01]\d)\b", q_lower)
+        if year_hits:
+            from datetime import datetime as _dt
+            current_year = _dt.now().year
+            if any(int(y) <= current_year - 5 for y in year_hits):
+                return True
+        return False
+
     async def _resolve_effective_article(
-        self, law_id: str, article_number: str,
+        self, law_id: str, article_number: str, query: str = "",
     ) -> dict[str, Any] | None:
         """
         For a candidate article, follow SUPERSEDED_BY then AMENDED_BY chains
-        to find the current effective version. Returns None if fully repealed.
+        to find the current effective version.
+
+        Returns None if the article has been fully repealed (REPEALED_BY edge),
+        unless the query explicitly asks about historical/superseded content.
+
+        For superseded articles the method follows the chain to the current
+        effective version (terminal of SUPERSEDED_BY chain) and attaches a
+        ``superseded_warning`` field to the returned dict.
         """
         # Try to find the article in KG
-        direct = await async_gremlin_submit(
+        direct = await self._get_gdb().execute(
             "g.V().hasLabel('Article')"
             ".has('law_code', law).has('num', num)"
             ".valueMap(true)",
@@ -252,8 +320,21 @@ class LegalLookupAgent(BaseAgent):
         article = direct[0]
         kg_id = self._extract_prop(article, "_kg_id")
 
+        allow_historical = self._is_historical_query(query)
+
+        # ── Check REPEALED_BY before anything else ──────────────
+        repealed_by = await self._get_gdb().execute(
+            "g.V().has('_kg_id', kg_id).out('REPEALED_BY').valueMap(true)",
+            {"kg_id": kg_id},
+        )
+        if repealed_by and not allow_historical:
+            # Article is repealed — skip it entirely
+            return None
+
+        superseded_warning: str | None = None
+
         # Follow SUPERSEDED_BY chain to terminal node
-        superseded = await async_gremlin_submit(
+        superseded = await self._get_gdb().execute(
             "g.V().has('_kg_id', kg_id)"
             ".repeat(out('SUPERSEDED_BY'))"
             ".until(outE('SUPERSEDED_BY').count().is(0))"
@@ -261,11 +342,25 @@ class LegalLookupAgent(BaseAgent):
             {"kg_id": kg_id},
         )
         if superseded:
-            article = superseded[0]
-            kg_id = self._extract_prop(article, "_kg_id")
+            # The original article has been superseded — warn and use the newer version
+            if not allow_historical:
+                new_article = superseded[0]
+                new_law = (
+                    self._extract_prop(new_article, "law_code")
+                    or self._extract_prop(new_article, "law_id")
+                )
+                new_num = (
+                    self._extract_prop(new_article, "num")
+                    or self._extract_prop(new_article, "article_number")
+                )
+                superseded_warning = (
+                    f"Điều này đã bị thay thế bởi {new_law} Điều {new_num}"
+                )
+                article = new_article
+                kg_id = self._extract_prop(article, "_kg_id")
 
         # Follow AMENDED_BY chain to get latest amendment
-        amended = await async_gremlin_submit(
+        amended = await self._get_gdb().execute(
             "g.V().has('_kg_id', kg_id)"
             ".repeat(out('AMENDED_BY'))"
             ".until(outE('AMENDED_BY').count().is(0))"
@@ -275,12 +370,15 @@ class LegalLookupAgent(BaseAgent):
         if amended:
             article = amended[0]
 
-        # Check if article was repealed
+        # Check if article was repealed (status field as fallback)
         status = self._extract_prop(article, "status")
-        if status and status.lower() in ("repealed", "bai_bo"):
+        if status and status.lower() in ("repealed", "bai_bo") and not allow_historical:
             return None
 
-        return self._normalize_article(article)
+        normalized = self._normalize_article(article)
+        if superseded_warning:
+            normalized["superseded_warning"] = superseded_warning
+        return normalized
 
     # ------------------------------------------------------------------
     # Step 3: Relevance Rerank
@@ -379,7 +477,7 @@ class LegalLookupAgent(BaseAgent):
                 kg_id = article.get("_kg_id", "")
                 if not kg_id:
                     continue
-                refs = await async_gremlin_submit(
+                refs = await self._get_gdb().execute(
                     "g.V().has('_kg_id', kg_id)"
                     ".out('REFERENCES').valueMap(true)"
                     ".limit(lim)",
@@ -402,6 +500,40 @@ class LegalLookupAgent(BaseAgent):
     # Step 5: Citation Extraction
     # ------------------------------------------------------------------
 
+    async def _article_is_active(self, kg_id: str) -> tuple[bool, str | None]:
+        """
+        Check whether an article vertex is still in effect.
+
+        Returns:
+            (True, None)         — article is active.
+            (False, warning_msg) — article has REPEALED_BY or SUPERSEDED_BY edge.
+        """
+        if not kg_id:
+            return True, None
+
+        repealed = await self._get_gdb().execute(
+            "g.V().has('_kg_id', kg_id).out('REPEALED_BY').valueMap(true)",
+            {"kg_id": kg_id},
+        )
+        if repealed:
+            return False, "Điều khoản này đã bị bãi bỏ"
+
+        superseded = await self._get_gdb().execute(
+            "g.V().has('_kg_id', kg_id).out('SUPERSEDED_BY').valueMap(true)",
+            {"kg_id": kg_id},
+        )
+        if superseded:
+            s = superseded[0]
+            new_law = (
+                self._extract_prop(s, "law_code") or self._extract_prop(s, "law_id")
+            )
+            new_num = (
+                self._extract_prop(s, "num") or self._extract_prop(s, "article_number")
+            )
+            return False, f"Điều này đã bị thay thế bởi {new_law} Điều {new_num}"
+
+        return True, None
+
     async def _extract_citations(
         self,
         articles: list[dict[str, Any]],
@@ -411,8 +543,23 @@ class LegalLookupAgent(BaseAgent):
     ) -> list[dict[str, Any]]:
         """For each article, extract citation via LLM, write to GDB."""
         citations: list[dict[str, Any]] = []
+        allow_historical = self._is_historical_query(query)
 
         for article in articles:
+            # ── Step 5 repealed/superseded filter ────────────────
+            kg_id = article.get("_kg_id", "")
+            article_superseded_warning = article.get("superseded_warning")
+
+            if not allow_historical and not article_superseded_warning:
+                # Check live in KG in case cross-reference expansion added a stale article
+                is_active, warning_msg = await self._article_is_active(kg_id)
+                if not is_active:
+                    logger.info(
+                        f"[LegalLookup] Skipping inactive article "
+                        f"{article.get('law_code')} Dieu {article.get('article_num')}: {warning_msg}"
+                    )
+                    continue
+
             citation = await self._extract_single_citation(article, query, case_context)
             if not citation or citation.get("confidence", 0) < self.CONFIDENCE_THRESHOLD:
                 continue
@@ -422,7 +569,7 @@ class LegalLookupAgent(BaseAgent):
             article_num = article["article_num"]
 
             # Write Citation vertex
-            await async_gremlin_submit(
+            await self._get_gdb().execute(
                 "g.addV('Citation')"
                 ".property('citation_id', cit_id)"
                 ".property('law_ref', law_ref)"
@@ -448,10 +595,10 @@ class LegalLookupAgent(BaseAgent):
 
             # Write CITES edge: Citation -> Article
             try:
-                await async_gremlin_submit(
+                await self._get_gdb().execute(
                     "g.V().has('Citation', 'citation_id', cit_id)"
                     ".addE('CITES')"
-                    ".to(g.V().hasLabel('Article')"
+                    ".to(__.V().hasLabel('Article')"
                     ".has('law_code', law).has('num', num))",
                     {"cit_id": cit_id, "law": law_code, "num": str(article_num)},
                 )
@@ -461,15 +608,16 @@ class LegalLookupAgent(BaseAgent):
             # Link Citation to Case
             if case_id:
                 try:
-                    await async_gremlin_submit(
+                    await self._get_gdb().execute(
                         "g.V().has('Case', 'case_id', cid)"
                         ".addE('HAS_CITATION')"
-                        ".to(g.V().has('Citation', 'citation_id', cit_id))",
+                        ".to(__.V().has('Citation', 'citation_id', cit_id))",
                         {"cid": case_id, "cit_id": cit_id},
                     )
                 except Exception as e:
                     logger.warning(f"[LegalLookup] Failed to link Citation to Case: {e}")
 
+            warning = article_superseded_warning
             citations.append({
                 "citation_id": cit_id,
                 "law_code": law_code,
@@ -481,6 +629,7 @@ class LegalLookupAgent(BaseAgent):
                 "confidence": citation.get("confidence"),
                 "article_ref": f"{law_code} Dieu {article_num}",
                 "is_cross_reference": article.get("is_cross_reference", False),
+                **({"warning": warning} if warning else {}),
             })
 
         return citations
@@ -539,7 +688,7 @@ class LegalLookupAgent(BaseAgent):
 
     async def _get_case_context(self, case_id: str) -> dict[str, Any]:
         """Fetch case + matched TTHC info for query building."""
-        cases = await async_gremlin_submit(
+        cases = await self._get_gdb().execute(
             "g.V().has('Case', 'case_id', cid).valueMap(true)",
             {"cid": case_id},
         )
@@ -551,7 +700,7 @@ class LegalLookupAgent(BaseAgent):
 
         tthc: list[dict] = []
         if tthc_code:
-            tthc = await async_gremlin_submit(
+            tthc = await self._get_gdb().execute(
                 "g.V().has('TTHCSpec', 'code', code).valueMap(true)",
                 {"code": tthc_code},
             )

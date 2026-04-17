@@ -1,0 +1,109 @@
+# Requires nginx-ingress-controller installed in the cluster.
+# For Alibaba Cloud ACK: https://www.alibabacloud.com/help/en/ack/ack-managed-and-ack-dedicated/user-guide/nginx-ingress
+#
+# TLS certificate: use cert-manager with Let's Encrypt, or provide the
+# govflow-tls Secret manually:
+#   kubectl create secret tls govflow-tls \
+#     --cert=fullchain.pem --key=privkey.pem -n govflow
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: govflow-ingress
+  namespace: govflow
+  labels:
+    app.kubernetes.io/name: govflow
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    # WebSocket upgrade support
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+    # HSTS
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - govflow.example.vn      # TODO: replace with real domain
+      secretName: govflow-tls
+  rules:
+    - host: govflow.example.vn   # TODO: replace with real domain
+      http:
+        paths:
+          # Backend API — must come before the catch-all
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: govflow-backend
+                port:
+                  number: 8100
+          - path: /cases
+            pathType: Prefix
+            backend:
+              service:
+                name: govflow-backend
+                port:
+                  number: 8100
+          - path: /documents
+            pathType: Prefix
+            backend:
+              service:
+                name: govflow-backend
+                port:
+                  number: 8100
+          - path: /agents
+            pathType: Prefix
+            backend:
+              service:
+                name: govflow-backend
+                port:
+                  number: 8100
+          - path: /graph
+            pathType: Prefix
+            backend:
+              service:
+                name: govflow-backend
+                port:
+                  number: 8100
+          - path: /search
+            pathType: Prefix
+            backend:
+              service:
+                name: govflow-backend
+                port:
+                  number: 8100
+          - path: /healthz
+            pathType: Prefix
+            backend:
+              service:
+                name: govflow-backend
+                port:
+                  number: 8100
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: govflow-backend
+                port:
+                  number: 8100
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: govflow-backend
+                port:
+                  number: 8100
+          # Frontend catch-all
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: govflow-frontend
+                port:
+                  number: 3100

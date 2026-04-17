@@ -14,6 +14,7 @@ import asyncpg
 import boto3
 from botocore.config import Config as BotoConfig
 from httpx import ASGITransport, AsyncClient
+from prometheus_client import REGISTRY as _PROM_REGISTRY
 
 from gremlin_python.driver.client import Client as GremlinRawClient
 from gremlin_python.driver.serializer import GraphSONSerializersV3d0
@@ -24,6 +25,34 @@ from src.auth import create_access_token
 from src.models.schemas import AgentProfile
 from src.models.enums import ClearanceLevel
 from src.graph.audit import AuditLogger
+
+
+# ---------------------------------------------------------------------------
+# Prometheus registry cleanup
+# Runs before every test to prevent "Duplicated timeseries" errors when
+# multiple test functions call create_app() in the same process.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_prometheus_registry():
+    """Clear the default Prometheus REGISTRY and reset the instrumentation flag
+    before each test so that create_app() can re-register metrics safely."""
+    # Unregister all collectors from the default registry
+    collectors = list(_PROM_REGISTRY._collector_to_names.keys())
+    for c in collectors:
+        try:
+            _PROM_REGISTRY.unregister(c)
+        except Exception:
+            pass
+
+    # Reset the module-level guard so the next create_app() re-instruments
+    try:
+        import src.main as _main_module
+        _main_module._INSTRUMENTATOR_REGISTERED = False
+    except Exception:
+        pass
+
+    yield
 
 
 # ---------------------------------------------------------------------------
@@ -88,14 +117,28 @@ async def pg_pool():
 
 
 @pytest.fixture
-async def clean_pg(pg_pool):
-    """Clean analytics and audit tables before each test."""
-    async with pg_pool.acquire() as conn:
-        await conn.execute("DELETE FROM audit_events_flat")
-        await conn.execute("DELETE FROM analytics_agents")
-        await conn.execute("DELETE FROM analytics_cases")
-        await conn.execute("DELETE FROM notifications")
-    yield pg_pool
+async def clean_pg():
+    """Clean analytics and audit tables before each test.
+
+    Creates a fresh asyncpg pool in the current function-scoped event loop
+    rather than reusing the session-scoped pg_pool, which may be bound to a
+    different event loop when tests run in asyncio_mode=auto.
+    """
+    try:
+        pool = await asyncpg.create_pool(dsn=PG_DSN, min_size=1, max_size=3, command_timeout=15)
+    except Exception:
+        pytest.skip("PostgreSQL not available at " + PG_DSN)
+        return
+
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM audit_events_flat")
+            await conn.execute("DELETE FROM analytics_agents")
+            await conn.execute("DELETE FROM analytics_cases")
+            await conn.execute("DELETE FROM notifications")
+        yield pool
+    finally:
+        await pool.close()
 
 
 # ---------------------------------------------------------------------------

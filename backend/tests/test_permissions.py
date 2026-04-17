@@ -4,9 +4,11 @@ Each test verifies a specific denial and confirms correct behavior.
 """
 
 import pytest
-from src.graph.sdk_guard import SDKGuard, SDKGuardViolation
-from src.graph.property_mask import PropertyMask, MaskAction
+
+from src.graph.property_mask import PropertyMask
 from src.graph.rbac_simulator import RBACSimulator
+from src.graph.sdk_guard import SDKGuard, SDKGuardViolation
+from src.models.enums import Role
 from src.models.schemas import AgentProfile, ClearanceLevel
 
 
@@ -48,7 +50,10 @@ class TestSDKGuardDenials:
 
     def test_05_depth_exceeded(self):
         guard = SDKGuard(make_profile(max_traversal_depth=2))
-        deep_q = "g.V().hasLabel('Case').out('HAS_DOCUMENT').out('HAS_DOCUMENT').out('HAS_DOCUMENT')"
+        deep_q = (  # noqa: E501
+            "g.V().hasLabel('Case')"
+            ".out('HAS_DOCUMENT').out('HAS_DOCUMENT').out('HAS_DOCUMENT')"
+        )
         with pytest.raises(SDKGuardViolation, match="DEPTH_EXCEEDED"):
             guard.validate(deep_q)
 
@@ -121,7 +126,7 @@ class TestRBACDenials:
             rbac.check_execution_privilege("g.addV('Task')", parsed)
 
 
-# --- Tier 3: Property Mask ---
+# --- Tier 3: Property Mask (original tests preserved) ---
 
 class TestPropertyMaskRedaction:
     def test_15_national_id_redacted(self):
@@ -159,18 +164,24 @@ class TestPropertyMaskRedaction:
         assert result["home_address"] == "12 Le Loi, Q1"
 
     def test_19_top_secret_gate(self):
+        """Security role with SECRET clearance is denied by clearance gate (not role)."""
         mask = PropertyMask()
+        # Use the security role (passes role check) but only SECRET clearance
+        # (fails the TOP_SECRET gate)
         result = mask.apply(
             {"criminal_record": "None"},
             ClearanceLevel.SECRET,
+            role=Role.SECURITY,
         )
         assert "CLASSIFIED:TOP_SECRET" in result["criminal_record"]
 
     def test_20_top_secret_clearance_sees_all(self):
+        """TOP_SECRET clearance + allowed role sees all fields."""
         mask = PropertyMask()
         result = mask.apply(
             {"criminal_record": "None", "home_address": "addr", "bank_account": "123"},
             ClearanceLevel.TOP_SECRET,
+            role=Role.SECURITY,
         )
         assert result["criminal_record"] == "None"
         assert result["home_address"] == "addr"
@@ -193,3 +204,94 @@ class TestPropertyMaskRedaction:
         after = mask.apply(record, ClearanceLevel.CONFIDENTIAL)
         assert "CLASSIFIED" in before["home_address"]
         assert after["home_address"] == "secret place"
+
+
+# --- Tier 3 Extension: Role-gated properties (task 0.5) ---
+
+class TestPropertyMaskRoleGating:
+    """Verify that role check takes precedence over clearance."""
+
+    def test_23_officer_top_secret_cannot_see_criminal_record(self):
+        """Officer with TOP_SECRET clearance must NOT see criminal_record (role-gated)."""
+        mask = PropertyMask()
+        result = mask.apply(
+            {"criminal_record": "Yes"},
+            ClearanceLevel.TOP_SECRET,
+            role=Role.OFFICER,
+        )
+        assert result["criminal_record"] == "[REDACTED:ROLE]", (
+            "Officer role should be denied criminal_record regardless of clearance"
+        )
+
+    def test_24_leader_top_secret_cannot_see_investigation_notes(self):
+        """Leader with TOP_SECRET cannot see investigation_notes (role-gated)."""
+        mask = PropertyMask()
+        result = mask.apply(
+            {"investigation_notes": "Classified note"},
+            ClearanceLevel.TOP_SECRET,
+            role=Role.LEADER,
+        )
+        assert result["investigation_notes"] == "[REDACTED:ROLE]"
+
+    def test_25_security_role_top_secret_sees_criminal_record(self):
+        """Security role with TOP_SECRET CAN see criminal_record."""
+        mask = PropertyMask()
+        result = mask.apply(
+            {"criminal_record": "Pending"},
+            ClearanceLevel.TOP_SECRET,
+            role=Role.SECURITY,
+        )
+        assert result["criminal_record"] == "Pending"
+
+    def test_26_legal_role_top_secret_sees_criminal_record(self):
+        """Legal role with TOP_SECRET CAN see criminal_record."""
+        mask = PropertyMask()
+        result = mask.apply(
+            {"criminal_record": "None"},
+            ClearanceLevel.TOP_SECRET,
+            role=Role.LEGAL,
+        )
+        assert result["criminal_record"] == "None"
+
+    def test_27_admin_role_top_secret_sees_criminal_record(self):
+        """Admin role with TOP_SECRET CAN see criminal_record."""
+        mask = PropertyMask()
+        result = mask.apply(
+            {"criminal_record": "None"},
+            ClearanceLevel.TOP_SECRET,
+            role=Role.ADMIN,
+        )
+        assert result["criminal_record"] == "None"
+
+    def test_28_security_insufficient_clearance_still_denied(self):
+        """Security role with insufficient clearance is still clearance-denied."""
+        mask = PropertyMask()
+        result = mask.apply(
+            {"criminal_record": "Data"},
+            ClearanceLevel.SECRET,  # below TOP_SECRET gate
+            role=Role.SECURITY,
+        )
+        assert "CLASSIFIED:TOP_SECRET" in result["criminal_record"]
+
+    def test_29_medical_history_role_gated(self):
+        """medical_history requires security/legal/admin role."""
+        mask = PropertyMask()
+        for role in [Role.OFFICER, Role.STAFF_INTAKE, Role.STAFF_PROCESSOR, Role.PUBLIC_VIEWER]:
+            result = mask.apply(
+                {"medical_history": "Sensitive"},
+                ClearanceLevel.TOP_SECRET,
+                role=role,
+            )
+            assert result["medical_history"] == "[REDACTED:ROLE]", (
+                f"Role {role} should be denied medical_history"
+            )
+
+    def test_30_no_role_provided_role_gated_field_denied(self):
+        """Calling apply() with role=None should deny role-gated fields."""
+        mask = PropertyMask()
+        result = mask.apply(
+            {"criminal_record": "X"},
+            ClearanceLevel.TOP_SECRET,
+            role=None,
+        )
+        assert result["criminal_record"] == "[REDACTED:ROLE]"
