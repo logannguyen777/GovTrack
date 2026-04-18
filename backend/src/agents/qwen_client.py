@@ -212,8 +212,8 @@ class QwenClient:
                     from ..services.activity_broadcaster import fire as _ab_fire
                     _ab_fire(
                         "cache",
-                        f"LLM cache HIT: {resolved_model}",
-                        detail="offline-ready",
+                        "Dùng lại phản hồi AI từ cache",
+                        detail="Tiết kiệm token — phản hồi có sẵn",
                         model=resolved_model,
                     )
                 except Exception:
@@ -271,14 +271,20 @@ class QwenClient:
                 try:
                     from ..services.activity_broadcaster import fire as _ab_fire
                     _u = completion.usage
-                    _detail = (
-                        f"tokens {_u.prompt_tokens}/{_u.completion_tokens}"
-                        if _u else ""
-                    )
+                    _prompt = _u.prompt_tokens if _u else 0
+                    _completion = _u.completion_tokens if _u else 0
+                    _model_vi = {
+                        "qwen-max-latest": "Qwen3-Max (suy luận nâng cao)",
+                        "qwen-plus-latest": "Qwen3-Plus",
+                        "qwen-turbo-latest": "Qwen3-Turbo",
+                        "qwen-vl-max-latest": "Qwen3-VL (đọc hình ảnh/PDF)",
+                        "qwen-vl-plus-latest": "Qwen3-VL Plus",
+                        "text-embedding-v3": "Qwen3 Embedding",
+                    }.get(resolved_model, resolved_model)
                     _ab_fire(
                         "llm",
-                        f"{resolved_model}: chat completion",
-                        detail=_detail,
+                        f"Gọi AI {_model_vi}",
+                        detail=f"Nhập {_prompt:,} / Xuất {_completion:,} token · {latency/1000:.1f}s",
                         duration_ms=latency,
                         model=resolved_model,
                     )

@@ -17,7 +17,9 @@ import {
   ChevronDown,
   ChevronRight as ChevronRightIcon,
   Zap,
+  Sparkles,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Skeleton } from "@/components/ui/skeleton-card";
 import { TraceReplayButton } from "@/components/trace/trace-replay-button";
 import { ReplayScrubber } from "@/components/trace/replay-scrubber";
@@ -343,6 +345,7 @@ export default function TraceViewer({
   params: Promise<{ case_id: string }>;
 }) {
   const { case_id } = use(params);
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [replayCutoff, setReplayCutoff] = useState<string | null>(null);
   const [selectedStep, setSelectedStep] = useState<AgentStepResponse | null>(
@@ -545,6 +548,17 @@ export default function TraceViewer({
           </div>
 
           <div className="flex shrink-0 items-center gap-2 pt-1">
+            {case_id !== "CASE-2026-0001" && (
+              <button
+                type="button"
+                onClick={() => router.push("/trace/CASE-2026-0001")}
+                className="flex items-center gap-1.5 rounded-md border border-purple-300 bg-gradient-to-r from-purple-600 to-violet-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90"
+                title="Mở hồ sơ CPXD mẫu có gap PCCC"
+              >
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                Xem case mẫu
+              </button>
+            )}
             {trace?.steps && trace.steps.length > 0 && (
               <AiThinkingStrip
                 steps={trace.steps}

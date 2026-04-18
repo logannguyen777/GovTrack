@@ -31,6 +31,7 @@ FROM python:3.11-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libmagic1 \
         curl \
+        poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user

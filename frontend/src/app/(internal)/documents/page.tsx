@@ -14,6 +14,7 @@ import {
   Info,
   ChevronRight,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import type { CaseResponse, DocumentResponse } from "@/lib/types";
 
@@ -116,13 +117,24 @@ export default function DocumentsPage() {
   return (
     <div className="space-y-5">
       {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-bold text-[var(--text-primary)]">
-          Quản lý tài liệu
-        </h1>
-        <p className="mt-1 text-sm text-[var(--text-muted)]">
-          Tổng hợp tài liệu đính kèm của các hồ sơ thủ tục hành chính
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">
+            Quản lý tài liệu
+          </h1>
+          <p className="mt-1 text-sm text-[var(--text-muted)]">
+            Tổng hợp tài liệu đính kèm của các hồ sơ thủ tục hành chính
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => router.push("/trace/CASE-2026-0001")}
+          className="flex shrink-0 items-center gap-1.5 rounded-md border border-purple-300 bg-gradient-to-r from-purple-600 to-violet-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90"
+          title="Mở hồ sơ CPXD mẫu có đầy đủ tài liệu và gap PCCC"
+        >
+          <Sparkles className="h-4 w-4" aria-hidden="true" />
+          Xem case mẫu
+        </button>
       </div>
 
       {/* Guidance banner */}

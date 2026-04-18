@@ -349,18 +349,29 @@ class PermittedGremlinClient:
 
 _FULL_LABELS = [
     "Case", "Document", "Bundle", "Task", "AgentStep",
-    "LawArticle", "Citation", "Gap", "Decision", "Opinion",
+    "Law", "Decree", "Circular", "Resolution", "Decision", "Ordinance",
+    "Article", "Clause", "Point", "LawArticle", "Citation", "Classification",
+    "ClassificationLevel", "ProcedureCategory", "RequiredComponent",
+    "Template", "PublishedDoc", "ExtractedEntity", "Gap",
+    "Opinion", "Summary", "Draft", "Position", "Other",
     "Applicant", "Organization", "TTHCSpec", "ConsultRequest",
     "ConsultOpinion", "DispatchLog",
     "AuditEvent",
 ]
 _FULL_EDGES = [
-    "HAS_DOCUMENT", "HAS_BUNDLE", "PROCESSED_BY", "SUBMITTED_BY",
-    "MATCHES_TTHC", "HAS_GAP", "CITES", "DECIDED_BY", "HAS_OPINION",
+    "HAS_DOCUMENT", "HAS_BUNDLE", "CONTAINS", "PROCESSED_BY", "SUBMITTED_BY",
+    "MATCHES_TTHC", "HAS_GAP", "GAP_FOR", "HAS_CITATION", "CITES",
+    "DECIDED_BY", "HAS_OPINION",
     "HAS_CONSULT_REQUEST", "DEPENDS_ON", "ASSIGNED_TO",
     "CLASSIFIED_AS", "REFERENCES", "HAS_SUMMARY", "HAS_DECISION",
     "HAS_DRAFT", "PRODUCED", "TRIGGERED_BY",
-    "CONSULTED_BY", "REFERENCES_DOC", "DISPATCHED_TO",
+    "CONSULTED", "CONSULTED_BY", "REFERENCES_DOC", "DISPATCHED_TO",
+    "REQUIRES", "SATISFIES", "HAS_CLAUSE", "HAS_POINT",
+    "AMENDED_BY", "SUPERSEDED_BY", "REPEALED_BY",
+    "PARTIALLY_REPEALED_BY", "PARTIALLY_SUSPENDED_BY", "SUSPENDED_BY",
+    "DETAILS", "DETAILED_BY", "BASED_ON", "RELATED",
+    "AUTHORIZED_FOR", "BELONGS_TO", "PARENT_OF",
+    "GOVERNED_BY", "EXTRACTED_FROM", "CLASSIFIED",
 ]
 
 

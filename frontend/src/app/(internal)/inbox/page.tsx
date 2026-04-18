@@ -37,6 +37,7 @@ import {
   X,
   Bot,
   UserCheck,
+  Sparkles,
 } from "lucide-react";
 import { useArtifactPanelStore } from "@/lib/stores/artifact-panel-store";
 import { HelpHintBanner } from "@/components/ui/help-hint-banner";
@@ -662,6 +663,15 @@ export default function DepartmentInbox() {
           <span className="text-sm text-[var(--text-muted)]">
             Tổng: {localCases.length} hồ sơ
           </span>
+          <button
+            type="button"
+            onClick={() => router.push("/trace/CASE-2026-0001")}
+            className="flex items-center gap-1.5 rounded-md border border-purple-300 bg-gradient-to-r from-purple-600 to-violet-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90"
+            title="Mở hồ sơ CPXD mẫu có gap PCCC"
+          >
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+            Xem case mẫu
+          </button>
           <OnboardingTour tourId="officer-inbox" />
         </div>
       </div>

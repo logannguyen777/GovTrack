@@ -32,6 +32,15 @@ async def query_graph(
     return GraphQueryResponse(result=result, execution_time_ms=round(elapsed, 2))
 
 
+@router.get("/trace/{case_id}", response_model=SubgraphResponse)
+async def get_case_trace_subgraph(case_id: str, user: CurrentUser, gdb: PermittedGDBDep):
+    """Alias: return the same subgraph shape as `/case/{case_id}/subgraph`.
+
+    Frontend uses this path for the Trace visualization page.
+    """
+    return await get_case_subgraph(case_id, user, gdb)
+
+
 @router.get("/case/{case_id}/subgraph", response_model=SubgraphResponse)
 async def get_case_subgraph(case_id: str, user: CurrentUser, gdb: PermittedGDBDep):
     """Get the case subgraph for React Flow visualization."""

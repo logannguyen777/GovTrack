@@ -71,7 +71,7 @@ export default function RootLayout({
       className={`${inter.variable} ${sourceSerif.variable} ${jetbrainsMono.variable}`}
     >
       <body className="antialiased">
-        <ThemeProvider defaultTheme="dark" storageKey="govflow-theme">
+        <ThemeProvider defaultTheme="light" storageKey="govflow-theme">
           <QueryProvider>
             <AuthProvider>
               <Suspense fallback={null}>

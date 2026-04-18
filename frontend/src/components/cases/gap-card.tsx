@@ -46,7 +46,8 @@ const SEVERITY_CONFIG: Record<
 }
 
 export function GapCard({ gap, className }: GapCardProps) {
-  const config = SEVERITY_CONFIG[gap.severity]
+  const config =
+    SEVERITY_CONFIG[gap.severity as GapSeverity] ?? SEVERITY_CONFIG.medium
 
   return (
     <article

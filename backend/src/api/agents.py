@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import fastapi
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, File, UploadFile
 
 from ..auth import CurrentUser
 from ..database import pg_connection
@@ -22,6 +22,63 @@ from ..models.schemas import (
 )
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
+
+
+_TTHC_HEURISTICS = [
+    (
+        "1.004415",
+        "Cấp giấy phép xây dựng",
+        ("cpxd", "xay_dung", "don_xin_cap_phep", "phep_xay", "gpxd"),
+    ),
+    (
+        "1.000046",
+        "Đăng ký biến động đất đai",
+        ("qsdd", "dat_dai", "gcn_qsdd", "bien_dong_dat", "giay_chung_nhan"),
+    ),
+    (
+        "1.001757",
+        "Cấp CCCD gắn chip",
+        ("cccd", "cmnd", "can_cuoc", "cong_dan"),
+    ),
+    (
+        "1.000122",
+        "Đăng ký thành lập doanh nghiệp",
+        ("dkkd", "thanh_lap", "dieu_le", "doanh_nghiep", "gp_kd", "giay_phep_kd"),
+    ),
+    (
+        "2.002154",
+        "Đăng ký ĐTM / đánh giá tác động môi trường",
+        ("dtm", "moi_truong", "danh_gia"),
+    ),
+]
+
+
+@router.post("/classify")
+async def classify_document(
+    user: CurrentUser,
+    file: UploadFile = File(...),
+):
+    """Quick TTHC classification based on uploaded file's name.
+
+    Returns top-3 TTHC candidates with confidence scores. Intended as a fast
+    hint for the intake wizard.
+    """
+    fname = (file.filename or "").lower()
+    scored: list[tuple[float, str, str]] = []
+    for code, name, keywords in _TTHC_HEURISTICS:
+        hits = sum(1 for k in keywords if k in fname)
+        score = min(0.98, 0.35 + 0.20 * hits)
+        scored.append((score, code, name))
+    scored.sort(reverse=True)
+    top3 = scored[:3]
+    return {
+        "tthc_code": top3[0][1] if top3 else None,
+        "tthc_name": top3[0][2] if top3 else None,
+        "confidence": [
+            {"code": c, "name": n, "pct": round(s * 100)}
+            for s, c, n in top3
+        ],
+    }
 
 
 @router.get("/trace/{case_id}", response_model=AgentTraceResponse)

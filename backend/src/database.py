@@ -294,17 +294,47 @@ def _gdb_activity_label(query: str) -> tuple[str, str] | None:
     q = query.strip()
     lower = q.lower()
     # Only broadcast interesting queries: vertex/edge creates and major traversals
+    _LABEL_VI = {
+        "Case": "Hồ sơ", "Document": "Tài liệu", "Bundle": "Bộ hồ sơ",
+        "Gap": "Thiếu sót", "Citation": "Trích dẫn pháp lý",
+        "AgentStep": "Bước agent", "AuditEvent": "Bản ghi audit",
+        "ConsultRequest": "Yêu cầu xin ý kiến",
+        "Task": "Tác vụ", "Summary": "Tóm tắt", "Draft": "Bản nháp",
+        "Decision": "Quyết định", "Opinion": "Ý kiến",
+    }
+    _EDGE_VI = {
+        "HAS_DOCUMENT": "Liên kết tài liệu → hồ sơ",
+        "HAS_BUNDLE": "Liên kết bộ hồ sơ",
+        "CONTAINS": "Chứa tài liệu",
+        "MATCHES_TTHC": "Khớp loại TTHC",
+        "HAS_GAP": "Ghi nhận thiếu sót",
+        "GAP_FOR": "Thiếu sót cho yêu cầu",
+        "CITES": "Trích dẫn điều luật",
+        "HAS_CITATION": "Gắn trích dẫn pháp lý",
+        "HAS_CONSULT_REQUEST": "Tạo yêu cầu xin ý kiến",
+        "CONSULTED": "Gửi đến phòng",
+        "PROCESSED_BY": "Agent đã xử lý",
+        "SUBMITTED_BY": "Công dân nộp",
+        "HAS_SUMMARY": "Gắn tóm tắt",
+        "HAS_DECISION": "Gắn quyết định",
+        "HAS_DRAFT": "Gắn bản nháp",
+    }
     if ".addv(" in lower:
-        # Extract vertex label from addV('Label')
         m = re.search(r"addV\(\s*['\"]([^'\"]+)", q)
         label = m.group(1) if m else "vertex"
-        return ("Alibaba GDB: addVertex", f"label={label}")
+        vi = _LABEL_VI.get(label, label)
+        return (f"Tạo vertex Knowledge Graph: {vi}", f"label={label}")
     if ".adde(" in lower:
         m = re.search(r"addE\(\s*['\"]([^'\"]+)", q)
         label = m.group(1) if m else "edge"
-        return ("Alibaba GDB: addEdge", f"label={label}")
-    if ".out(" in lower or ".in(" in lower or ".valuemap" in lower or ".count()" in lower:
-        return ("Alibaba GDB: traversal", "Gremlin query")
+        vi = _EDGE_VI.get(label, label.replace("_", " ").title())
+        return (f"Tạo quan hệ KG: {vi}", f"edge={label}")
+    if ".count()" in lower:
+        return ("Đếm vertex/edge trên Knowledge Graph", "Gremlin count()")
+    if ".valuemap" in lower:
+        return ("Đọc thuộc tính vertex từ Knowledge Graph", "valueMap()")
+    if ".out(" in lower or ".in(" in lower:
+        return ("Duyệt quan hệ trên Knowledge Graph", "Gremlin traversal")
     return None
 
 
@@ -480,55 +510,131 @@ def get_oss_client() -> Any:
     return _oss_client
 
 
-def oss_put_object(key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
-    """Upload an object to OSS/MinIO. Returns the object key."""
+def oss_put_object(
+    key: str,
+    data: bytes,
+    content_type: str = "application/octet-stream",
+    inline: bool = True,
+) -> str:
+    """Upload an object to OSS/MinIO. Returns the object key.
+
+    When ``inline=True`` a ``Content-Disposition: inline`` header is stored
+    on the object so presigned GET URLs render the content in the browser
+    (iframe / <img>) instead of triggering a download.
+    """
     client = get_oss_client()
+    # Guess filename from last segment for the inline Content-Disposition
+    fname = key.rsplit("/", 1)[-1] or "document"
+    disposition = (
+        f'inline; filename="{fname}"' if inline else f'attachment; filename="{fname}"'
+    )
     if settings.govflow_env == "local":
         client.put_object(
-            Bucket=settings.oss_bucket, Key=key, Body=data, ContentType=content_type
+            Bucket=settings.oss_bucket,
+            Key=key,
+            Body=data,
+            ContentType=content_type,
+            ContentDisposition=disposition,
         )
     else:
-        client.put_object(key, data, headers={"Content-Type": content_type})
+        client.put_object(
+            key,
+            data,
+            headers={
+                "Content-Type": content_type,
+                "Content-Disposition": disposition,
+            },
+        )
     logger.info(f"Uploaded {key} ({len(data)} bytes)")
+    try:
+        from .services.activity_broadcaster import fire as _ab_fire
+        _ext = key.rsplit(".", 1)[-1] if "." in key else "bin"
+        _size_kb = len(data) / 1024
+        _ab_fire(
+            "oss",
+            "Lưu tài liệu vào Alibaba OSS",
+            detail=f".{_ext} · {_size_kb:.1f} KB",
+        )
+    except Exception:
+        pass
     return key
 
 
-def oss_put_signed_url(key: str, expires: int = 3600) -> str:
-    """Generate a pre-signed PUT URL for uploading an object."""
+def oss_put_signed_url(key: str, expires: int = 3600, content_type: str | None = None) -> str:
+    """Generate a pre-signed PUT URL for uploading an object.
+
+    When ``content_type`` is provided, it is included in the OSS v1 signature
+    string-to-sign. Browsers that PUT with the matching ``Content-Type``
+    header will pass the signature check; without this, any client-sent
+    header causes 403 SignatureDoesNotMatch.
+    """
     client = get_oss_client()
     if settings.govflow_env == "local":
-        url = client.generate_presigned_url(
-            "put_object",
-            Params={"Bucket": settings.oss_bucket, "Key": key},
-            ExpiresIn=expires,
-        )
+        params = {"Bucket": settings.oss_bucket, "Key": key}
+        if content_type:
+            params["ContentType"] = content_type
+        url = client.generate_presigned_url("put_object", Params=params, ExpiresIn=expires)
     else:
-        url = client.sign_url("PUT", key, expires)
+        headers = {"Content-Type": content_type} if content_type else None
+        url = client.sign_url("PUT", key, expires, headers=headers, slash_safe=True)
     # Broadcast OSS activity (extension only, no key path with PII)
     try:
         from .services.activity_broadcaster import fire as _ab_fire
         _ext = key.rsplit(".", 1)[-1] if "." in key else "bin"
         _ab_fire(
             "oss",
-            "Alibaba Cloud OSS: presigned PUT",
-            detail=f"ext={_ext} · expires={expires}s",
+            "Tạo link tải file lên OSS",
+            detail=f"Định dạng .{_ext} · hiệu lực {expires//60} phút",
         )
     except Exception:
         pass
     return url
 
 
-def oss_get_signed_url(key: str, expires: int = 3600) -> str:
-    """Generate a pre-signed GET URL for an object."""
+def oss_get_signed_url(
+    key: str, expires: int = 3600, inline: bool = True
+) -> str:
+    """Generate a pre-signed GET URL for an object.
+
+    When ``inline=True`` the URL forces ``Content-Disposition: inline``
+    and sets ``Content-Type`` based on the file extension so browsers
+    render PDFs/images directly in an iframe instead of downloading.
+    """
     client = get_oss_client()
+
+    # Guess content-type from extension (for inline rendering hints)
+    ext = key.rsplit(".", 1)[-1].lower() if "." in key else ""
+    _CTYPE = {
+        "pdf": "application/pdf",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "txt": "text/plain; charset=utf-8",
+        "html": "text/html; charset=utf-8",
+        "json": "application/json",
+    }
+    ctype = _CTYPE.get(ext, "application/octet-stream")
+
     if settings.govflow_env == "local":
+        params = {"Bucket": settings.oss_bucket, "Key": key}
+        if inline:
+            params["ResponseContentDisposition"] = "inline"
+            params["ResponseContentType"] = ctype
         return client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": settings.oss_bucket, "Key": key},
-            ExpiresIn=expires,
+            "get_object", Params=params, ExpiresIn=expires
         )
     else:
-        return client.sign_url("GET", key, expires)
+        oss_params = None
+        if inline:
+            # Only override Content-Disposition — overriding content-type when the
+            # stored object already has a declared content-type returns OSS
+            # "InvalidRequest: Can not override response header on content-type".
+            oss_params = {"response-content-disposition": "inline"}
+        return client.sign_url(
+            "GET", key, expires, params=oss_params, slash_safe=True
+        )
 
 
 # ============================================================

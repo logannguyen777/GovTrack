@@ -84,8 +84,8 @@ async def search_law(user: CurrentUser, query: str, top_k: int = 10, law_id: str
         _top = float(rows[0]["similarity"]) if rows else 0.0
         _ab_fire(
             "vector",
-            "pgvector / Hologres Proxima: law chunk search",
-            detail=f"top_sim={_top:.3f} · {len(rows)} hits · dim={_EMBEDDING_DIM}",
+            "Tìm điều luật theo ngữ nghĩa (vector search)",
+            detail=f"{len(rows)} điều luật · độ khớp {_top:.0%} · embedding {_EMBEDDING_DIM}d",
             model="text-embedding-v3",
         )
     except Exception:

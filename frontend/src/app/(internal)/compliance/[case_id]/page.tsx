@@ -1037,6 +1037,34 @@ export default function ComplianceWorkspace({
               <AlertTriangle className="h-4 w-4" aria-hidden="true" />
               Yêu cầu bổ sung
             </button>
+            <button
+              onClick={async () => {
+                try {
+                  await apiClient.post(
+                    `/api/cases/${case_id}/consult-request`,
+                    {
+                      target_department: "DEPT-PHAPCHE",
+                      question: `Xin ý kiến pháp chế cho hồ sơ ${case_id}: có ${gaps.length} thiếu sót cần đánh giá.`,
+                      priority: "normal",
+                      legal_refs: gaps
+                        .map((g) => g.requirement_ref)
+                        .filter(Boolean)
+                        .slice(0, 3),
+                    },
+                  );
+                  toast.success("Đã gửi yêu cầu xin ý kiến pháp chế");
+                } catch (e) {
+                  console.error(e);
+                  toast.error("Không gửi được yêu cầu. Vui lòng thử lại.");
+                }
+              }}
+              className="flex items-center gap-2 rounded-md border px-4 py-2.5 text-sm font-medium transition-colors hover:bg-indigo-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+              style={{ borderColor: "#6366f1", color: "#4338ca" }}
+              aria-label="Xin ý kiến phòng pháp chế"
+            >
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
+              Xin ý kiến pháp chế
+            </button>
           </div>
         )}
       </div>

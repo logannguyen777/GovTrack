@@ -376,24 +376,33 @@ export default function DocumentViewer({
             {/* PDF/Image preview area */}
             <div className="flex min-h-[600px] items-center justify-center">
               {urlData?.signed_url ? (
-                doc.content_type?.startsWith("image/") ? (
-                  // Image preview
+                (() => {
+                  const fname = (doc.filename || "").toLowerCase();
+                  const ct = doc.content_type || "";
+                  const isImage =
+                    ct.startsWith("image/") ||
+                    /\.(jpe?g|png|gif|webp|bmp)$/i.test(fname);
+                  return isImage;
+                })() ? (
+                  // Image preview — proxy via backend to force inline
                   <div className="flex h-full w-full items-center justify-center p-4">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={urlData.signed_url}
+                      src={`/api/documents/${id}/view?token=${encodeURIComponent(typeof window !== "undefined" ? (localStorage.getItem("govflow-token") ?? "") : "")}`}
                       alt={doc.filename}
                       className="max-h-[80vh] max-w-full rounded-md object-contain shadow-sm"
                       loading="lazy"
                     />
                   </div>
-                ) : doc.content_type === "application/pdf" ? (
-                  // PDF inline viewer via iframe
+                ) : (
+                    doc.content_type === "application/pdf" ||
+                    /\.pdf$/i.test((doc.filename || "").toLowerCase())
+                  ) ? (
+                  // PDF inline viewer — proxy via backend (OSS force-download)
                   <iframe
-                    src={urlData.signed_url}
+                    src={`/api/documents/${id}/view?token=${encodeURIComponent(typeof window !== "undefined" ? (localStorage.getItem("govflow-token") ?? "") : "")}`}
                     title={`Xem trước: ${doc.filename}`}
                     className="h-[80vh] w-full border-0"
-                    sandbox="allow-same-origin allow-scripts"
                     aria-label={`PDF: ${doc.filename}`}
                   />
                 ) : extractedText ? (

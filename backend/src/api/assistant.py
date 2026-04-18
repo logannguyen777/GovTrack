@@ -53,6 +53,121 @@ logger = logging.getLogger("govflow.assistant")
 
 router = APIRouter(prefix="/assistant", tags=["Assistant"])
 
+
+# ──────────────────────────────────────────────────────────────
+# Consult AI helpers: real Qwen-powered opinion draft + precedent cases
+# ──────────────────────────────────────────────────────────────
+@router.post("/draft-opinion")
+async def draft_consult_opinion(body: dict, user: CurrentUser) -> dict:
+    """Draft a Vietnamese legal opinion via Qwen-Max for the Consult workspace."""
+    case_code = body.get("case_code") or body.get("case_id") or "(hồ sơ)"
+    stance = body.get("stance") or "agree"
+    question = body.get("question") or ""
+    context = body.get("context") or ""
+
+    stance_vi = {
+        "agree": "Đồng ý với đề xuất",
+        "disagree": "Không đồng ý",
+        "abstain": "Bảo lưu / chuyển cơ quan khác",
+    }.get(stance, stance)
+
+    sys_prompt = (
+        "Bạn là chuyên gia pháp chế cấp cao tại cơ quan hành chính nhà nước Việt Nam. "
+        "Nhiệm vụ: soạn ý kiến chuyên môn bằng văn phong công văn chính thức, "
+        "căn cứ theo ND 30/2020/NĐ-CP. Văn bản ngắn gọn (4-8 câu), trích dẫn đầy đủ căn cứ pháp lý, "
+        "kết thúc bằng câu đề nghị hành động cụ thể."
+    )
+    user_prompt = (
+        f"Soạn ý kiến Phòng Pháp chế cho hồ sơ {case_code}.\n"
+        f"Lập trường: {stance_vi}.\n"
+        f"Vấn đề cần tham mưu: {question}\n"
+        f"Tóm tắt hồ sơ: {context}\n\n"
+        "Trả về thuần văn bản tiếng Việt, không dùng markdown."
+    )
+
+    try:
+        client = QwenClient()
+        completion = await client.chat(
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            model="reasoning",
+            max_tokens=600,
+        )
+        draft = completion.choices[0].message.content or ""
+    except Exception as e:
+        logger.warning(f"draft-opinion Qwen fail: {e}")
+        draft = (
+            f"Sau khi nghiên cứu hồ sơ {case_code}, Phòng Pháp chế thể hiện lập trường "
+            f"{stance_vi.lower()}. Căn cứ các quy định pháp luật hiện hành, đề nghị đơn vị "
+            f"chủ trì tham khảo ý kiến này để có bước xử lý phù hợp."
+        )
+    return {"draft": draft.strip(), "case_code": case_code, "stance": stance}
+
+
+@router.get("/precedent-cases/{case_id}")
+async def precedent_cases(case_id: str, user: CurrentUser) -> list[dict]:
+    """Return up-to-5 precedent (similar) completed cases for same TTHC."""
+    async with pg_connection() as conn:
+        target = await conn.fetchrow(
+            "SELECT tthc_code FROM analytics_cases WHERE case_id=$1", case_id
+        )
+        if not target or not target["tthc_code"]:
+            return []
+        rows = await conn.fetch(
+            "SELECT case_id, tthc_code, status, submitted_at, completed_at, processing_days "
+            "FROM analytics_cases "
+            "WHERE tthc_code=$1 AND case_id<>$2 "
+            "AND status IN ('approved','published','rejected') "
+            "ORDER BY completed_at DESC NULLS LAST LIMIT 5",
+            target["tthc_code"],
+            case_id,
+        )
+    return [
+        {
+            "case_id": r["case_id"],
+            "tthc_code": r["tthc_code"],
+            "status": r["status"],
+            "processing_days": r["processing_days"],
+            "submitted_at": r["submitted_at"].isoformat() if r["submitted_at"] else None,
+            "completed_at": r["completed_at"].isoformat() if r["completed_at"] else None,
+            "outcome_label": {
+                "approved": "Đã phê duyệt",
+                "published": "Đã ban hành",
+                "rejected": "Đã từ chối",
+            }.get(r["status"], r["status"]),
+        }
+        for r in rows
+    ]
+
+
+# Law chunk lookup by chunk_id for citation drawer
+@router.get("/law-chunk/{chunk_id}")
+async def get_law_chunk(chunk_id: str, user: CurrentUser) -> dict:
+    """Return full law chunk detail (for citation popover / KG Explorer)."""
+    async with pg_connection() as conn:
+        row = await conn.fetchrow(
+            "SELECT id::text, law_id, article_number, clause_path, title, content, metadata "
+            "FROM law_chunks WHERE id::text=$1 LIMIT 1",
+            chunk_id,
+        )
+    if not row:
+        raise HTTPException(status_code=404, detail="Law chunk not found")
+    import json as _json
+    return {
+        "id": row["id"],
+        "law_id": row["law_id"],
+        "article_number": row["article_number"],
+        "clause_path": row["clause_path"],
+        "title": row["title"],
+        "content": row["content"],
+        "metadata": (
+            row["metadata"] if isinstance(row["metadata"], dict)
+            else _json.loads(row["metadata"] or "{}")
+        ),
+    }
+
 # Module-level singletons (lightweight, thread-safe)
 _rate_limiter = RateLimiter(max_per_minute=settings.chat_rate_limit_per_minute)
 _content_filter = ContentFilter()

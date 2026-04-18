@@ -41,6 +41,8 @@ dependencies = [
     "prometheus-fastapi-instrumentator>=7.0.0",
     # resilience: retry + circuit breaker helpers
     "tenacity>=8.3.0",
+    # PDF → image conversion for Qwen-VL OCR
+    "pdf2image>=1.17.0",
 ]
 
 [project.optional-dependencies]

@@ -9,7 +9,8 @@ import { OnboardingTour } from "@/components/onboarding/onboarding-tour";
 import { apiClient } from "@/lib/api";
 import type { WSMessage, AuditEventResponse } from "@/lib/types";
 import { toast } from "sonner";
-import { Shield, AlertTriangle, Eye, Download, ChevronDown } from "lucide-react";
+import { Shield, AlertTriangle, Eye, Download, ChevronDown, Sparkles } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { HELP_CONTENT } from "@/lib/help-content";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -308,6 +309,7 @@ function exportAuditCSV(events: AuditEventResponse[]) {
 // ---------------------------------------------------------------------------
 
 export default function SecurityConsole() {
+  const router = useRouter();
   const [liveEvents, setLiveEvents] = useState<AuditEventResponse[]>([]);
   const [elevationActive, setElevationActive] = useState(false);
   const [triggeringScene, setTriggeringScene] = useState<string | null>(null);
@@ -380,7 +382,18 @@ export default function SecurityConsole() {
           <Shield className="h-6 w-6 text-[var(--accent-primary)]" />
           <h1 className="text-2xl font-bold">Trung tâm bảo mật</h1>
         </div>
-        <OnboardingTour tourId="leader-dashboard" showButton={true} />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => router.push("/compliance/CASE-2026-0001")}
+            className="flex items-center gap-1.5 rounded-md border border-purple-300 bg-gradient-to-r from-purple-600 to-violet-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90"
+            title="Mở case CPXD mẫu có gap PCCC và audit trail"
+          >
+            <Sparkles className="h-4 w-4" aria-hidden="true" />
+            Xem case mẫu
+          </button>
+          <OnboardingTour tourId="leader-dashboard" showButton={true} />
+        </div>
       </div>
 
       <HelpHintBanner id="security-3-tier" variant="info">

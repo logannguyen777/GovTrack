@@ -11,10 +11,11 @@ from urllib.parse import urlparse
 
 import magic
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 
 from ..auth import CurrentUser
 from ..config import settings
-from ..database import oss_get_signed_url, oss_put_object
+from ..database import get_oss_client, oss_get_signed_url, oss_put_object
 from ..graph.deps import PermittedGDBDep
 from ..graph.permitted_client import PermittedGremlinClient
 from ..models.chat_schemas import ExtractResponse
@@ -247,6 +248,81 @@ async def get_document(doc_id: str, user: CurrentUser, gdb: PermittedGDBDep):
     )
 
 
+@router.get("/{doc_id}/view")
+async def view_document(doc_id: str, token: str | None = None):
+    """Proxy-stream a document from OSS with ``Content-Disposition: inline``.
+
+    Alibaba OSS accounts may have ``x-oss-force-download: true`` set at the
+    service level, which causes browsers to download PDFs/images instead of
+    rendering them in an ``<iframe>`` or ``<img>``. This endpoint side-steps
+    that by streaming the object through the backend with inline headers.
+
+    Accepts JWT via ``?token=...`` query string because ``<iframe src=...>``
+    and ``<img src=...>`` cannot send Authorization headers.
+    """
+    if not token:
+        raise HTTPException(status_code=401, detail="token required")
+    try:
+        from ..auth import decode_token
+        decode_token(token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="invalid token")
+
+    # Use raw gremlin (no permission client) — we've already validated the token.
+    from ..database import async_gremlin_submit
+
+    props = None
+    for prop in ("doc_id", "document_id"):
+        rows = await async_gremlin_submit(
+            f"g.V().has('Document', '{prop}', did).valueMap(true)",
+            {"did": doc_id},
+        )
+        if rows:
+            props = rows[0]
+            break
+
+    if not props:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    def _pick(prop: str) -> str:
+        v = props.get(prop, "")
+        return v[0] if isinstance(v, list) else (v or "")
+
+    oss_key = _pick("oss_key")
+    if not oss_key:
+        raise HTTPException(status_code=404, detail="Document has no OSS key")
+
+    filename = _pick("filename") or oss_key.rsplit("/", 1)[-1]
+    content_type = _pick("content_type")
+    if not content_type:
+        lower = filename.lower()
+        if lower.endswith(".pdf"):
+            content_type = "application/pdf"
+        elif lower.endswith((".jpg", ".jpeg")):
+            content_type = "image/jpeg"
+        elif lower.endswith(".png"):
+            content_type = "image/png"
+        else:
+            content_type = "application/octet-stream"
+
+    client = get_oss_client()
+    try:
+        result = client.get_object(oss_key)
+        data = result.read()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"OSS fetch failed: {e}")
+
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "private, max-age=600",
+            "X-Doc-Id": doc_id,
+        },
+    )
+
+
 @router.get("/{doc_id}/signed-url")
 async def get_document_url(doc_id: str, user: CurrentUser, gdb: PermittedGDBDep):
     """Get a pre-signed download URL for a document."""
@@ -331,6 +407,21 @@ async def extract_document(
         # ZIP slip guard for docx/xlsx
         if detected_mime in _ZIP_BASED_MIME:
             _check_zip_slip(data)
+
+        # PDF → PNG conversion (Qwen-VL does not accept PDF directly)
+        if detected_mime == "application/pdf":
+            try:
+                from pdf2image import convert_from_bytes
+                pages = convert_from_bytes(data, dpi=200, first_page=1, last_page=1, fmt="png")
+                if not pages:
+                    raise RuntimeError("pdf2image returned no pages")
+                buf = BytesIO()
+                pages[0].save(buf, format="PNG", optimize=True)
+                data = buf.getvalue()
+                detected_mime = "image/png"
+                original_name = (original_name.rsplit(".", 1)[0] or "page") + ".png"
+            except Exception as e:
+                logger.warning("PDF→PNG conversion failed, will send PDF as-is: %s", e)
 
         # Sanitise filename
         safe_name = _sanitize_filename(original_name)

@@ -208,9 +208,7 @@ function PanelBody() {
 
 export function ArchitectureLivePanel() {
   const [mobileOpen, setMobileOpen] = React.useState(false);
-  // Start collapsed so the panel does not cover page content by default.
-  // Users can open it via the toggle chevron button on the left edge.
-  const [desktopOpen, setDesktopOpen] = React.useState(false);
+  const [desktopOpen, setDesktopOpen] = React.useState(true);
 
   return (
     <>

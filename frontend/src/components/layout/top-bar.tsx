@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { usePathname } from "next/navigation";
 import {
   Search,
@@ -125,6 +126,17 @@ const NOTIF_TYPE_COLORS: Record<string, string> = {
 function NotificationPopover() {
   const { notifications, unreadCount, markRead, markAllRead } =
     useNotificationStore();
+  const [pulsing, setPulsing] = React.useState(false);
+  const prevCountRef = React.useRef(unreadCount);
+
+  React.useEffect(() => {
+    if (unreadCount > prevCountRef.current) {
+      setPulsing(true);
+      const t = setTimeout(() => setPulsing(false), 2200);
+      return () => clearTimeout(t);
+    }
+    prevCountRef.current = unreadCount;
+  }, [unreadCount]);
 
   return (
     <Popover>
@@ -139,13 +151,17 @@ function NotificationPopover() {
           "text-[var(--text-muted)] transition-colors duration-[var(--duration-micro)]",
           "hover:bg-[var(--bg-surface-raised)] hover:text-[var(--text-primary)]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]",
+          pulsing && "animate-pulse text-[var(--accent-primary)]",
         )}
       >
         <Bell size={18} aria-hidden="true" />
         {unreadCount > 0 && (
           <span
             aria-hidden="true"
-            className="absolute right-1.5 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-0.5 text-[9px] font-bold text-white"
+            className={cn(
+              "absolute right-1.5 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-0.5 text-[9px] font-bold text-white",
+              pulsing && "ring-2 ring-[var(--accent-primary)] ring-offset-1",
+            )}
             style={{ backgroundColor: "var(--accent-primary)" }}
           >
             {unreadCount > 99 ? "99+" : unreadCount}

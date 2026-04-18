@@ -249,13 +249,27 @@ class LegalLookupAgent(BaseAgent):
 
         sql = """
             SELECT law_id, article_number, clause_path, content, title,
-                   1 - (embedding <=> $1::vector) AS similarity
+                   CASE WHEN embedding IS NULL
+                        THEN 0.0
+                        ELSE 1 - (embedding <=> $1::vector) END AS similarity
             FROM law_chunks
+            WHERE embedding IS NOT NULL
             ORDER BY embedding <=> $1::vector
             LIMIT $2
         """
         async with pg_connection() as conn:
             rows = await conn.fetch(sql, vec_str, self.TOP_K_VECTOR)
+
+        if not rows:
+            # No embeddings available → return top-K by article_number (graceful fallback)
+            fallback_sql = """
+                SELECT law_id, article_number, clause_path, content, title, 0.0 AS similarity
+                FROM law_chunks
+                ORDER BY law_id, article_number
+                LIMIT $1
+            """
+            async with pg_connection() as conn:
+                rows = await conn.fetch(fallback_sql, self.TOP_K_VECTOR)
 
         return [
             {
@@ -264,7 +278,7 @@ class LegalLookupAgent(BaseAgent):
                 "clause_path": r["clause_path"],
                 "content": r["content"],
                 "title": r["title"],
-                "similarity": float(r["similarity"]),
+                "similarity": float(r["similarity"] or 0.0),
             }
             for r in rows
         ]

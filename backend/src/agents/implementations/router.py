@@ -61,16 +61,38 @@ class RouterAgent(BaseAgent):
         })
 
         try:
-            # ── Step 1: Verify MATCHES_TTHC edge exists ──────────────
+            # ── Step 1: Verify MATCHES_TTHC edge exists (fallback to Case.tthc_code) ──
             tthc_match = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid)"
                 ".out('MATCHES_TTHC').valueMap(true)",
                 {"cid": case_id},
             )
             if not tthc_match:
+                # Fallback: look up TTHCSpec by Case.tthc_code property
+                case_props = await self._get_gdb().execute(
+                    "g.V().has('Case', 'case_id', cid).valueMap(true)",
+                    {"cid": case_id},
+                )
+                fallback_code = (
+                    self._extract_prop(case_props[0], "tthc_code") if case_props else None
+                )
+                if fallback_code:
+                    tthc_match = await self._get_gdb().execute(
+                        "g.V().has('TTHCSpec', 'code', code).valueMap(true)",
+                        {"code": fallback_code},
+                    )
+                    if tthc_match:
+                        # Lazily create the MATCHES_TTHC edge so downstream queries work.
+                        await self._get_gdb().execute(
+                            "g.V().has('Case', 'case_id', cid)"
+                            ".as('c').V().has('TTHCSpec', 'code', code)"
+                            ".addE('MATCHES_TTHC').from('c')",
+                            {"cid": case_id, "code": fallback_code},
+                        )
+
+            if not tthc_match:
                 raise ValueError(
-                    f"Case {case_id}: no MATCHES_TTHC edge found. "
-                    "Classifier must run before Router."
+                    f"Case {case_id}: no MATCHES_TTHC edge and no tthc_code on Case."
                 )
 
             tthc_spec = tthc_match[0]

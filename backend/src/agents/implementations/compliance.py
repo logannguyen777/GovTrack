@@ -60,15 +60,34 @@ class ComplianceAgent(BaseAgent):
         )
 
         try:
-            # ── Step 1: Verify MATCHES_TTHC edge exists ──────────────
+            # ── Step 1: Verify MATCHES_TTHC edge (fallback to Case.tthc_code) ──
             tthc_match = await self._get_gdb().execute(
                 "g.V().has('Case', 'case_id', cid).out('MATCHES_TTHC').valueMap(true)",
                 {"cid": case_id},
             )
             if not tthc_match:
+                case_props = await self._get_gdb().execute(
+                    "g.V().has('Case', 'case_id', cid).valueMap(true)",
+                    {"cid": case_id},
+                )
+                fallback_code = (
+                    self._extract_prop(case_props[0], "tthc_code") if case_props else None
+                )
+                if fallback_code:
+                    tthc_match = await self._get_gdb().execute(
+                        "g.V().has('TTHCSpec', 'code', code).valueMap(true)",
+                        {"code": fallback_code},
+                    )
+                    if tthc_match:
+                        await self._get_gdb().execute(
+                            "g.V().has('Case', 'case_id', cid)"
+                            ".as('c').V().has('TTHCSpec', 'code', code)"
+                            ".addE('MATCHES_TTHC').from('c')",
+                            {"cid": case_id, "code": fallback_code},
+                        )
+            if not tthc_match:
                 raise ValueError(
-                    f"Case {case_id}: no MATCHES_TTHC edge found. "
-                    "Classifier must run before Compliance."
+                    f"Case {case_id}: no MATCHES_TTHC edge and no tthc_code on Case."
                 )
 
             tthc_spec = tthc_match[0]
@@ -257,7 +276,7 @@ class ComplianceAgent(BaseAgent):
                     await tx.submit(
                         "g.addV('Gap')"
                         ".property('gap_id', gap_id)"
-                        ".property('description', desc)"
+                        ".property('description', descr)"
                         ".property('severity', severity)"
                         ".property('is_blocking', is_blk)"
                         ".property('component_name', comp)"
@@ -268,7 +287,7 @@ class ComplianceAgent(BaseAgent):
                         ".addE('HAS_GAP').to('gap')",
                         {
                             "gap_id": gap_id,
-                            "desc": reason,
+                            "descr": reason,
                             "severity": severity,
                             "is_blk": is_blocking,
                             "comp": component_name,

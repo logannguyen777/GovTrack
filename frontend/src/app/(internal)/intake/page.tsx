@@ -556,6 +556,7 @@ export default function IntakeUI() {
         applicant_phone?: string;
         applicant_address?: string;
         notes?: string;
+        sample_files?: Array<{ filename: string; url: string; doc_type?: string }>;
       }>("/api/public/demo-samples/1.004415");
 
       setSelectedTTHC(sample.tthc_code ?? "1.004415");
@@ -571,7 +572,33 @@ export default function IntakeUI() {
         notes: sample.notes ?? "Hồ sơ xin cấp phép xây dựng nhà ở riêng lẻ",
         department_id: "DEPT-QLDT",
       }));
-      toast.success("Đã điền dữ liệu mẫu");
+
+      // Auto-load sample files from the demo-samples API
+      const sampleFileList = sample.sample_files ?? [
+        { filename: "sample_cccd.jpg", url: "/public/samples/sample_cccd.jpg" },
+        { filename: "sample_don_xin_cpxd.pdf", url: "/public/samples/sample_don_xin_cpxd.pdf" },
+        { filename: "sample_ban_ve_thiet_ke.pdf", url: "/public/samples/sample_ban_ve_thiet_ke.pdf" },
+        { filename: "sample_gcn_qsdd.pdf", url: "/public/samples/sample_gcn_qsdd.pdf" },
+      ];
+      const fetchedFiles: UploadedFile[] = await Promise.all(
+        sampleFileList.map(async (sf) => {
+          try {
+            const resp = await fetch(sf.url);
+            const blob = await resp.blob();
+            const mimeType = sf.filename.endsWith(".pdf") ? "application/pdf" : "image/jpeg";
+            const file = new File([blob], sf.filename, { type: mimeType });
+            return { file, id: crypto.randomUUID(), status: "pending" as const };
+          } catch {
+            // If fetch fails, create a stub file so the list renders
+            const mimeType = sf.filename.endsWith(".pdf") ? "application/pdf" : "image/jpeg";
+            const file = new File(["demo"], sf.filename, { type: mimeType });
+            return { file, id: crypto.randomUUID(), status: "pending" as const };
+          }
+        }),
+      );
+      setFiles(fetchedFiles);
+      setShowTthcSuggestions(false);
+      toast.success(`Đã điền dữ liệu mẫu · ${fetchedFiles.length} tài liệu`);
     } catch {
       // Fallback inline fixture when endpoint unavailable
       setSelectedTTHC("1.004415");
@@ -586,7 +613,21 @@ export default function IntakeUI() {
         notes: "Hồ sơ xin cấp phép xây dựng nhà ở riêng lẻ",
         department_id: "DEPT-QLDT",
       }));
-      toast.success("Đã điền dữ liệu mẫu");
+      // Stub files from known public path
+      const stubNames = [
+        { name: "sample_cccd.jpg", type: "image/jpeg" },
+        { name: "sample_don_xin_cpxd.pdf", type: "application/pdf" },
+        { name: "sample_ban_ve_thiet_ke.pdf", type: "application/pdf" },
+        { name: "sample_gcn_qsdd.pdf", type: "application/pdf" },
+      ];
+      setFiles(
+        stubNames.map((s) => ({
+          file: new File(["demo"], s.name, { type: s.type }),
+          id: crypto.randomUUID(),
+          status: "pending" as const,
+        })),
+      );
+      toast.success("Đã điền dữ liệu mẫu · 4 tài liệu");
     } finally {
       setIsLoadingDemo(false);
     }
@@ -676,12 +717,15 @@ export default function IntakeUI() {
       await apiClient.post(`/api/cases/${caseRes.case_id}/finalize`);
 
       setPhase("processing");
-      await apiClient.post<unknown>(
-        `/api/agents/run/${caseRes.case_id}`,
-        { pipeline: "full" } satisfies AgentRunRequest,
-      );
+      apiClient
+        .post<unknown>(
+          `/api/agents/run/${caseRes.case_id}`,
+          { pipeline: "full" } satisfies AgentRunRequest,
+        )
+        .catch((e) => console.error("agent run trigger failed", e));
 
-      toast.success("Hồ sơ đã tạo. Đang xử lý bởi AI...");
+      toast.success("Hồ sơ đã tạo. Đang xử lý AI — xem live trace ngay...");
+      router.push(`/trace/${caseRes.case_id}`);
     } catch (err) {
       setPhase("error");
       toast.error("Có lỗi xảy ra khi tạo hồ sơ");
@@ -742,16 +786,16 @@ export default function IntakeUI() {
             type="button"
             onClick={() => void handleLoadDemoSample()}
             disabled={isLoadingDemo || phase !== "idle"}
-            className="flex items-center gap-1.5 rounded-md border border-[var(--border-default)] bg-[var(--bg-surface)] px-3 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-surface-raised)] disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md border border-purple-300 bg-gradient-to-r from-purple-600 to-violet-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Nạp hồ sơ mẫu (chế độ demo)"
-            title="Điền thông tin hồ sơ CPXD mẫu để demo nhanh"
+            title="Điền thông tin hồ sơ CPXD mẫu + 4 tài liệu để demo nhanh"
           >
             {isLoadingDemo ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
-              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+              <Sparkles className="h-4 w-4" aria-hidden="true" />
             )}
-            Nạp hồ sơ mẫu
+            Điền mẫu (demo)
           </button>
           <button
             type="button"

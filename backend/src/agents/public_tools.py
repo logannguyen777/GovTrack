@@ -26,7 +26,10 @@ async def _system_gdb_execute(query: str, bindings: dict | None = None) -> list:
 logger = logging.getLogger("govflow.public_tools")
 
 # Path to tthc_specs JSON files
-_TTHC_SPECS_DIR = Path(__file__).parent.parent.parent.parent / "data" / "tthc_specs"
+_TTHC_SPECS_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "tthc_specs"
+if not _TTHC_SPECS_DIR.exists():
+    # Legacy layout (/project/backend/src/agents → /project/data/tthc_specs)
+    _TTHC_SPECS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "tthc_specs"
 
 # Step guide templates (generic, customised with tthc_detail when available)
 _STEP_GUIDES: dict[str, str] = {
