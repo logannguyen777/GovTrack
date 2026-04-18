@@ -84,6 +84,14 @@ export function SubmitWizard({ tthcCode, prefillId }: SubmitWizardProps) {
   const aiFilledFields = useSubmitFormStore((s) => s.aiFilledFields);
   const setField = useSubmitFormStore((s) => s.setField);
   const totalRequiredFields = useSubmitFormStore((s) => s.totalRequiredFields);
+  const resetForTTHC = useSubmitFormStore((s) => s.resetForTTHC);
+
+  // Reset session state whenever the wizard mounts for a new TTHC — prevents
+  // stale formData / aiFilledFields from a previous localStorage session from
+  // leaking into the current precheck payload (e.g. "file_count", "9/1 trường").
+  React.useEffect(() => {
+    resetForTTHC(decoded);
+  }, [decoded, resetForTTHC]);
 
   React.useEffect(() => {
     if (prefillId) {
