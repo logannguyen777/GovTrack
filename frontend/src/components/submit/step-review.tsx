@@ -68,16 +68,19 @@ export function StepReview({
         </div>
       </div>
 
-      {/* AI precheck */}
+      {/* AI precheck — pass ACTUAL uploaded filenames + full form data */}
       <AIReviewPanel
         tthcCode={tthcCode}
         formData={{
-          applicant_name: data.applicant_name,
-          applicant_id_number: data.applicant_id_number,
-          applicant_phone: data.applicant_phone,
-          applicant_address: data.applicant_address,
-          file_count: files.length,
+          applicant_name: data.applicant_name || "",
+          applicant_id_number: data.applicant_id_number || "",
+          applicant_phone: data.applicant_phone || "",
+          applicant_address: data.applicant_address || "",
         }}
+        uploadedFileUrls={files
+          .filter((f) => f.status !== "error")
+          .map((f) => f.file?.name || "")
+          .filter((n) => n.length > 0)}
       />
 
       {/* Confirmation */}

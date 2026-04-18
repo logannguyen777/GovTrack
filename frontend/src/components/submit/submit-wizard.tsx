@@ -252,7 +252,11 @@ export function SubmitWizard({ tthcCode, prefillId }: SubmitWizardProps) {
   // Don't divide by zero; store typically tracks 2 (required fields for the
   // wizard: applicant_name + applicant_id_number). Phone and address are
   // optional on the backend CaseCreate schema.
-  const requiredTotal = Math.max(1, totalRequiredFields);
+  // Applicant form has a fixed set of 5 fields (name, id, phone, address, dob).
+  // Store's totalRequiredFields may be 0 if never set, so cap to 5 min to avoid
+  // division-by-one bugs (filled=9/total=1 → 900%).
+  const requiredTotal = Math.max(5, totalRequiredFields);
+  const filledSafe = Math.min(aiFilledFields.length, requiredTotal);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-12">
@@ -281,7 +285,7 @@ export function SubmitWizard({ tthcCode, prefillId }: SubmitWizardProps) {
       {/* AI fill progress (shows when AI has filled something) */}
       {aiFilledFields.length > 0 && (
         <AIFillProgress
-          filled={aiFilledFields.length}
+          filled={filledSafe}
           total={requiredTotal}
           className="mt-4"
         />
