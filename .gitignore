@@ -57,3 +57,6 @@ logs/
 # LLM response cache (do not commit)
 .cache/
 backend/.cache/
+
+# Local infra secrets
+infra/secrets/
