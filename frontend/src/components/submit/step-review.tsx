@@ -78,7 +78,6 @@ export function StepReview({
           applicant_address: data.applicant_address || "",
         }}
         uploadedFileUrls={files
-          .filter((f) => f.status !== "error")
           .map((f) => f.file?.name || "")
           .filter((n) => n.length > 0)}
       />
